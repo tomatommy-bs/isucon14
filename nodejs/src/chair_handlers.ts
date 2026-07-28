@@ -66,6 +66,12 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
   const chairLocationID = ulid();
   await ctx.var.dbConn.beginTransaction();
   try {
+    const [[prevLocation]] = await ctx.var.dbConn.query<
+      Array<ChairLocation & RowDataPacket>
+    >(
+      "SELECT * FROM chair_locations WHERE chair_id = ? ORDER BY created_at DESC LIMIT 1",
+      [chair.id],
+    );
     await ctx.var.dbConn.query(
       "INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (?, ?, ?, ?)",
       [chairLocationID, chair.id, reqJson.latitude, reqJson.longitude],
@@ -73,6 +79,15 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
     const [[location]] = await ctx.var.dbConn.query<
       Array<ChairLocation & RowDataPacket>
     >("SELECT * FROM chair_locations WHERE id = ?", [chairLocationID]);
+    if (prevLocation) {
+      const distance =
+        Math.abs(reqJson.latitude - prevLocation.latitude) +
+        Math.abs(reqJson.longitude - prevLocation.longitude);
+      await ctx.var.dbConn.query(
+        "UPDATE chairs SET total_distance = total_distance + ?, total_distance_updated_at = ? WHERE id = ?",
+        [distance, location.created_at, chair.id],
+      );
+    }
     const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1",
       [chair.id],
