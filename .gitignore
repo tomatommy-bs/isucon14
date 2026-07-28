@@ -1,0 +1,27 @@
+# Go
+go/isuride
+go/vendor/
+
+# Node.js
+nodejs/node_modules/
+nodejs/dist/
+
+# Python
+python/__pycache__/
+python/.venv/
+
+# Ruby
+ruby/vendor/
+ruby/.bundle/
+
+# PHP
+php/vendor/
+
+# Rust
+rust/target/
+
+# Perl
+perl/local/
+
+# misc
+*.log
