@@ -163,15 +163,15 @@ export const appGetRides = async (ctx: Context<Environment>) => {
   const items: GetAppRidesResponseItem[] = [];
   try {
     const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-      "SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC",
+      `SELECT r.* FROM rides r
+       JOIN ride_statuses rs ON rs.ride_id = r.id
+       WHERE r.user_id = ?
+         AND rs.created_at = (SELECT MAX(created_at) FROM ride_statuses rs2 WHERE rs2.ride_id = r.id)
+         AND rs.status = 'COMPLETED'
+       ORDER BY r.created_at DESC`,
       [user.id],
     );
     for (const ride of rides) {
-      const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
-      if (status !== "COMPLETED") {
-        continue;
-      }
-
       const fare = await calculateDiscountedFare(
         ctx.var.dbConn,
         user.id,
