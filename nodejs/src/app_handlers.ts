@@ -239,18 +239,19 @@ export const appPostRides = async (ctx: Context<Environment>) => {
   const rideId = ulid();
   await ctx.var.dbConn.beginTransaction();
   try {
-    const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-      "SELECT * FROM rides WHERE user_id = ?",
+    const [[{ has_active }]] = await ctx.var.dbConn.query<
+      Array<{ has_active: number } & RowDataPacket>
+    >(
+      `SELECT EXISTS (
+         SELECT 1 FROM rides r
+         JOIN ride_statuses rs ON rs.ride_id = r.id
+         WHERE r.user_id = ?
+           AND rs.created_at = (SELECT MAX(created_at) FROM ride_statuses rs2 WHERE rs2.ride_id = r.id)
+           AND rs.status <> 'COMPLETED'
+       ) AS has_active`,
       [user.id],
     );
-    let continuingRideCount = 0;
-    for (const ride of rides) {
-      const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
-      if (status !== "COMPLETED") {
-        continuingRideCount++;
-      }
-    }
-    if (continuingRideCount > 0) {
+    if (has_active) {
       return ctx.text("ride already exists", 409);
     }
     await ctx.var.dbConn.query(
