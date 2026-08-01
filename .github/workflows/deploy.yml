@@ -3,6 +3,9 @@ name: Deploy tuning-log to GitHub Pages
 on:
   push:
     branches: [main]
+    paths:
+      - "tuning-log/**"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 permissions:
@@ -23,6 +26,7 @@ jobs:
       - name: Install, build, upload Pages artifact
         uses: withastro/action@v3
         with:
+          path: tuning-log
           node-version: "22"
 
   deploy:
