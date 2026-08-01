@@ -28,11 +28,19 @@ jobs:
       - name: Overlay checked-out nginx config onto /etc/nginx
         run: sudo rsync -a --delete nginx/ /etc/nginx/
 
-      - name: Generate dummy TLS keys (CIのみ、実際の秘密鍵は使わない)
+      - name: Generate dummy TLS key+cert pairs (CIのみ、実際の秘密鍵・証明書は使わない)
+        # nginx -t は秘密鍵と証明書の鍵ペア一致まで検証するため、リポジトリ内の
+        # 既存.crtをそのまま使うと鍵不一致でエラーになる。ペアで生成・上書きする。
         run: |
-          sudo mkdir -p /etc/nginx/tls /etc/ssl/private
-          for key in /etc/nginx/tls/dummy.key /etc/nginx/tls/_.xiv.isucon.net.key /etc/ssl/private/ssl-cert-snakeoil.key; do
-            sudo openssl req -x509 -newkey rsa:2048 -keyout "$key" -out /tmp/dummy.crt \
+          sudo mkdir -p /etc/nginx/tls /etc/ssl/private /etc/ssl/certs
+          declare -A pairs=(
+            ["/etc/nginx/tls/dummy.key"]="/etc/nginx/tls/dummy.crt"
+            ["/etc/nginx/tls/_.xiv.isucon.net.key"]="/etc/nginx/tls/_.xiv.isucon.net.crt"
+            ["/etc/ssl/private/ssl-cert-snakeoil.key"]="/etc/ssl/certs/ssl-cert-snakeoil.pem"
+          )
+          for key in "${!pairs[@]}"; do
+            cert="${pairs[$key]}"
+            sudo openssl req -x509 -newkey rsa:2048 -keyout "$key" -out "$cert" \
               -days 1 -nodes -subj "/CN=ci-dummy" >/dev/null 2>&1
           done
 
