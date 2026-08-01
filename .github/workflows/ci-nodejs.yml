@@ -3,17 +3,17 @@ name: CI (nodejs)
 on:
   push:
     paths:
-      - "nodejs/**"
+      - "home/isucon/webapp/nodejs/**"
       - ".github/workflows/ci-nodejs.yml"
   pull_request:
     paths:
-      - "nodejs/**"
+      - "home/isucon/webapp/nodejs/**"
       - ".github/workflows/ci-nodejs.yml"
   workflow_dispatch:
 
 defaults:
   run:
-    working-directory: nodejs
+    working-directory: home/isucon/webapp/nodejs
 
 jobs:
   typecheck-and-lint:
@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: nodejs/package-lock.json
+          cache-dependency-path: home/isucon/webapp/nodejs/package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Typecheck

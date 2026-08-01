@@ -8,11 +8,11 @@ name: CI (nginx config syntax check)
 on:
   push:
     paths:
-      - "nginx/**"
+      - "etc/nginx/**"
       - ".github/workflows/ci-nginx.yml"
   pull_request:
     paths:
-      - "nginx/**"
+      - "etc/nginx/**"
       - ".github/workflows/ci-nginx.yml"
   workflow_dispatch:
 
@@ -26,7 +26,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y nginx
 
       - name: Overlay checked-out nginx config onto /etc/nginx
-        run: sudo rsync -a --delete nginx/ /etc/nginx/
+        run: sudo rsync -a --delete etc/nginx/ /etc/nginx/
 
       - name: Generate dummy TLS key+cert pairs (CIのみ、実際の秘密鍵・証明書は使わない)
         # nginx -t は秘密鍵と証明書の鍵ペア一致まで検証するため、リポジトリ内の

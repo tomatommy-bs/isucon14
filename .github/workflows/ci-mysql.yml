@@ -3,11 +3,11 @@ name: CI (mysql config validation)
 on:
   push:
     paths:
-      - "mysql/**"
+      - "etc/mysql/**"
       - ".github/workflows/ci-mysql.yml"
   pull_request:
     paths:
-      - "mysql/**"
+      - "etc/mysql/**"
       - ".github/workflows/ci-mysql.yml"
   workflow_dispatch:
 
@@ -21,7 +21,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mysql-server
 
       - name: Overlay checked-out mysql config onto /etc/mysql
-        run: sudo rsync -a --delete mysql/ /etc/mysql/
+        run: sudo rsync -a --delete etc/mysql/ /etc/mysql/
 
       - name: Validate mysqld config syntax
         run: sudo mysqld --validate-config

@@ -1,5 +1,6 @@
 {
   "repos": {
-    "etc": "https://github.com/tomatommy-bs/isucon14-etc"
+    "etc": "https://github.com/tomatommy-bs/isucon14",
+    "webapp": "https://github.com/tomatommy-bs/isucon14"
   }
 }

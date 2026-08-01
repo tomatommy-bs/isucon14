@@ -3,7 +3,6 @@ title: "/etc全体を単一gitリポジトリに統合し、チーム共有の�
 date: 2026-08-01
 tags: [process, git-management, team-workflow, infra]
 commit: "29a296d"
-commitUrl: "https://github.com/tomatommy-bs/isucon14-etc/commit/29a296d"
 repo: etc
 logs: []
 ---
