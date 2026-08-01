@@ -20,7 +20,8 @@ export async function getStaticPaths() {
 
 const { entry, prev, next } = Astro.props;
 const { Content } = await render(entry);
-const { title, date, tags, commit, commitUrl, repo, metrics, logs } = entry.data;
+const { title, date, tags, commit, commitUrl, repo, metrics, logs, verboseLogging } =
+  entry.data;
 
 const config = loadConfig();
 const resolvedCommitUrl = resolveCommitUrl({ commit, commitUrl, repo }, config);
@@ -34,7 +35,7 @@ function isUrl(path: string) {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
-    <title>{title} | ISUCON14 tuning log</title>
+    <title>{title} | isucon-toolkit</title>
     <style>
       :root {
         --bg: #ffffff;
@@ -107,6 +108,41 @@ function isUrl(path: string) {
         display: block;
         padding: 1rem;
         overflow-x: auto;
+      }
+      .logging-badge {
+        display: inline-block;
+        border-radius: 4px;
+        padding: 0.1rem 0.5rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+      .logging-badge.on {
+        background: #fff1f2;
+        color: #9f1239;
+        border: 1px solid #fecdd3;
+      }
+      .logging-badge.off {
+        background: #f0fdf4;
+        color: #166534;
+        border: 1px solid #bbf7d0;
+      }
+      @media (prefers-color-scheme: dark) {
+        .logging-badge.on {
+          background: #341316;
+          color: #ffb4c0;
+          border-color: #5c1f27;
+        }
+        .logging-badge.off {
+          background: #0f2417;
+          color: #86efac;
+          border-color: #14532d;
+        }
+      }
+      .meta-note {
+        display: block;
+        color: var(--muted);
+        font-size: 0.75rem;
+        margin-top: 0.25rem;
       }
       .log-item {
         margin-bottom: 0.5rem;
@@ -206,6 +242,22 @@ function isUrl(path: string) {
             {Object.entries(metrics.after).map(([k, v]) => (
               <span>{k}: {v} </span>
             ))}
+          </dd>
+        </>
+      )}
+
+      {verboseLogging != null && (
+        <>
+          <dt>計測時の詳細ログ</dt>
+          <dd>
+            <span class={`logging-badge ${verboseLogging ? "on" : "off"}`}>
+              {verboseLogging ? "ON(スロークエリログ等 有効)" : "OFF"}
+            </span>
+            {verboseLogging && (
+              <span class="meta-note">
+                ログ書き込み自体のI/Oオーバーヘッドが乗っている可能性があるため、OFF時の計測と単純比較しない
+              </span>
+            )}
           </dd>
         </>
       )}

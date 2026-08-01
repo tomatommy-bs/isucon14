@@ -1,7 +1,8 @@
-# isucon-toolkit 運用マニュアル(AI向け)
+# tuning-log 運用マニュアル(AI向け)
 
-このリポジトリは、ISUCONのパフォーマンスチューニング作業を進めるAIエージェント(Claude Code等)自身が、
-`entries/` にチューニング履歴を書き残していくための道具です。人間が手で全件書く前提ではありません。
+このディレクトリは、ISUCONのパフォーマンスチューニング作業を進めるAIエージェント(Claude Code等)自身が、
+`entries/` にチューニング履歴を書き残していくための道具です(isucon-toolkitをinstallしたもの)。
+人間が手で全件書く前提ではありません。エントリ・設定は通常通りこのモノレポ(`isucon14`)側でコミットしていく。
 
 ## いつエントリを作るか
 
@@ -25,16 +26,25 @@
    date: YYYY-MM-DD
    tags: [n+1, sql, index, mysql-config, ...]  # 自由。既存エントリのタグを再利用して揺れを減らす
    commit: "コミットハッシュ"        # 任意。このリポジトリ内のコミットでなくても良い(対象アプリのコミット)
+   commitUrl: "https://..."          # 任意。commitへの完全なURLを直接指定する場合(tuning-log.config.jsonより優先)
    repo: webapp                       # 任意。対象リポジトリ名(webapp/nginx/mysql等、複数リポジトリを横断する場合に区別)
    metrics:
      before: { score: 3117 }          # 自由なkey-value。score は必ずこのキー名で入れる(グラフ化対象)
      after:  { score: 3314 }
+   verboseLogging: false              # 任意。この計測(主にafter)を取ったとき、MySQLスロークエリログ等の
+                                       # 詳細ログが有効だったか。run_bench_2tier.shの-vフラグに対応させる。
+                                       # ログ記録自体のI/Oオーバーヘッドでスコアが変動しうるため、
+                                       # 値が違う計測同士を単純比較しないための目印になる
    logs:
      - label: "pt-query-digest (after)"
-       path: "bench_logs/20260729_004646/mysql_slow.log"  # このリポジトリ内に実在しなくてよい。
-                                                            # 対象サーバー上の実際のログ格納場所を書くドキュメント目的の参照
+       path: "bench_logs/20260729_004646/mysql_slow.log"  # このリポジトリ内に実在しなくてよい。相対パスでも
+                                                            # http(s)のURLでもよい(URLなら自動的にリンクになる)
+       excerpt: "任意。ログの要点を数行だけ貼り付けておける"
    ---
    ```
+
+   `repo`名と実際のリポジトリURLを紐付けたい場合は、プロジェクトルートに`tuning-log.config.json`を作成する
+   (`tuning-log.config.example.json`参照)。設定しておくと`commit`フィールドから自動的にリンクが生成される。
 
 4. 本文は最低限、次の見出しを含める(順不同・自由記述):
    - `## 計測値` — 何を見て、何がわかったか(生の数値・EXPLAIN結果の要点など)
@@ -60,9 +70,11 @@ npm run dev
 
 ## 複数リポジトリ構成での注意
 
-ISUCONでは「アプリ本体のリポジトリ」と「このtuning-logリポジトリ」が別リポジトリになる想定。
-`commit` フィールドはアプリ側リポジトリのハッシュを指すため、このリポジトリ自身のgit historyとは対応しない。
-そのため `entries/*.md` を編集した際は、このリポジトリ側でも都度コミットしてよい(頻度は問わない)。
+ISUCONでは「アプリ本体のリポジトリ」と「install後のtuning-logディレクトリ」が別リポジトリの場合と、
+同一リポジトリ配下（`tuning-log/`サブディレクトリ）の場合がある。いずれにせよ、
+`commit` フィールドはアプリ側リポジトリのハッシュを指すため、install先リポジトリ自身のgit historyとは
+対応しないことがある点に注意。`entries/*.md` を編集した際は、install先リポジトリ側で都度コミットする
+(頻度は問わない)。
 
 ---
 

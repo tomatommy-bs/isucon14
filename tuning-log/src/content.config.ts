@@ -21,6 +21,10 @@ const entries = defineCollection({
         after: z.record(z.string(), z.number()).optional(),
       })
       .optional(),
+    // この計測(主にmetrics.afterの値)を取ったとき、MySQLスロークエリログ等の詳細ログが
+    // 有効だったかどうか。有効だとログ書き込み自体のI/Oオーバーヘッドでスコアが変動しうるため、
+    // 他の計測結果と単純比較してよいかの判断材料になる(run_bench_2tier.shの-vフラグに対応)
+    verboseLogging: z.boolean().optional(),
     // ベンチマーク/メトリクスログへの参照(ログ本体はコピーしない)
     logs: z
       .array(
