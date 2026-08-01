@@ -2,7 +2,7 @@
 title: "COMMITオーバーヘッドの原因分析とdurability設定チューニング"
 date: 2026-07-29
 tags: [mysql-config, commit, fsync, negative-result]
-repo: mysql
+repo: etc
 metrics:
   before:
     score: 2720
