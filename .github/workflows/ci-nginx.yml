@@ -1,0 +1,40 @@
+name: CI (nginx config syntax check)
+
+# 注意: SSL秘密鍵は意図的にこのリポジトリから除外している(.gitignore参照)。
+# nginx -t は証明書ファイルの実在チェックも行うため、CI実行時のみダミーの
+# 秘密鍵を生成して満たす。実際のサーバーには一切影響しない(このジョブは
+# GitHub Actionsのランナー上でのみ完結し、自動デプロイは行わない)。
+
+on:
+  push:
+    paths:
+      - "nginx/**"
+      - ".github/workflows/ci-nginx.yml"
+  pull_request:
+    paths:
+      - "nginx/**"
+      - ".github/workflows/ci-nginx.yml"
+  workflow_dispatch:
+
+jobs:
+  nginx-syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nginx
+        run: sudo apt-get update && sudo apt-get install -y nginx
+
+      - name: Overlay checked-out nginx config onto /etc/nginx
+        run: sudo rsync -a --delete nginx/ /etc/nginx/
+
+      - name: Generate dummy TLS keys (CIのみ、実際の秘密鍵は使わない)
+        run: |
+          sudo mkdir -p /etc/nginx/tls /etc/ssl/private
+          for key in /etc/nginx/tls/dummy.key /etc/nginx/tls/_.xiv.isucon.net.key /etc/ssl/private/ssl-cert-snakeoil.key; do
+            sudo openssl req -x509 -newkey rsa:2048 -keyout "$key" -out /tmp/dummy.crt \
+              -days 1 -nodes -subj "/CN=ci-dummy" >/dev/null 2>&1
+          done
+
+      - name: nginx -t
+        run: sudo nginx -t
