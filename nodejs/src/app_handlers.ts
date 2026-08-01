@@ -1,35 +1,35 @@
-import { ulid } from "ulid";
 import type { Context } from "hono";
-import type { Environment } from "./types/hono.js";
-import { secureRandomStr } from "./utils/random.js";
+import { setCookie } from "hono/cookie";
 import type {
+  Connection,
   ResultSetHeader,
   RowDataPacket,
-  Connection,
 } from "mysql2/promise";
+import { ulid } from "ulid";
+import {
+  ErroredUpstream,
+  FARE_PER_DISTANCE,
+  INITIAL_FARE,
+  calculateDistance,
+  calculateFare,
+  getLatestRideStatus,
+} from "./common.js";
+import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
+import type { Environment } from "./types/hono.js";
 import type {
-  PaymentToken,
   Chair,
+  ChairLocation,
   Coordinate,
   Coupon,
   Owner,
+  PaymentToken,
   Ride,
   RideStatus,
   User,
-  ChairLocation,
 } from "./types/models.js";
-import { setCookie } from "hono/cookie";
-import {
-  calculateDistance,
-  calculateFare,
-  ErroredUpstream,
-  FARE_PER_DISTANCE,
-  getLatestRideStatus,
-  INITIAL_FARE,
-} from "./common.js";
 import type { CountResult } from "./types/util.js";
-import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
 import { atoi } from "./utils/integer.js";
+import { secureRandomStr } from "./utils/random.js";
 
 type AppPostUserRequest = Readonly<{
   username: string;

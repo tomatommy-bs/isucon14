@@ -1,6 +1,6 @@
+import { setTimeout } from "node:timers/promises";
 import { ErroredUpstream } from "./common.js";
 import type { Ride } from "./types/models.js";
-import { setTimeout } from "node:timers/promises";
 
 type PaymentGatewayPostPaymentRequest = {
   amount: number;

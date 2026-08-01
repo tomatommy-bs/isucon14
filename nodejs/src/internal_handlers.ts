@@ -1,6 +1,6 @@
 import type { Context } from "hono";
-import type { Environment } from "./types/hono.js";
 import type { RowDataPacket } from "mysql2";
+import type { Environment } from "./types/hono.js";
 import type { Chair, Ride } from "./types/models.js";
 
 // このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる

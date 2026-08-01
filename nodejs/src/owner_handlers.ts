@@ -1,11 +1,11 @@
 import type { Context } from "hono";
-import type { Environment } from "./types/hono.js";
-import { secureRandomStr } from "./utils/random.js";
 import { setCookie } from "hono/cookie";
 import type { RowDataPacket } from "mysql2";
-import type { Chair, Ride } from "./types/models.js";
-import { calculateSale } from "./common.js";
 import { ulid } from "ulid";
+import { calculateSale } from "./common.js";
+import type { Environment } from "./types/hono.js";
+import type { Chair, Ride } from "./types/models.js";
+import { secureRandomStr } from "./utils/random.js";
 
 export const ownerPostOwners = async (ctx: Context<Environment>) => {
   const reqJson = await ctx.req.json<{ name: string }>();

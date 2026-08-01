@@ -1,6 +1,9 @@
+import { execSync } from "node:child_process";
 import { serve } from "@hono/node-server";
-import { Hono, type Context } from "hono";
+import { type Context, Hono } from "hono";
 import { createMiddleware } from "hono/factory";
+import { logger } from "hono/logger";
+import { createPool } from "mysql2/promise";
 import {
   appGetNearbyChairs,
   appGetNotification,
@@ -18,6 +21,7 @@ import {
   chairPostCoordinate,
   chairPostRideStatus,
 } from "./chair_handlers.js";
+import { internalGetMatching } from "./internal_handlers.js";
 import {
   appAuthMiddleware,
   chairAuthMiddleware,
@@ -29,10 +33,6 @@ import {
   ownerPostOwners,
 } from "./owner_handlers.js";
 import type { Environment } from "./types/hono.js";
-import { execSync } from "node:child_process";
-import { internalGetMatching } from "./internal_handlers.js";
-import { createPool } from "mysql2/promise";
-import { logger } from "hono/logger";
 
 const pool = createPool({
   host: process.env.ISUCON_DB_HOST || "127.0.0.1",
