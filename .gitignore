@@ -1,0 +1,40 @@
+# /etc全体をgit管理するための.gitignore
+# 方針: 基本的に追跡するが、秘密鍵・パスワードを含むファイル・揮発性/巨大ファイルは除外する
+
+# 秘密鍵・証明書の秘密鍵部分
+*.key
+ssh_host_*_key
+ssl/private/
+nginx/tls/*.key
+
+# パスワード・認証情報を含むファイル
+shadow
+shadow-
+gshadow
+gshadow-
+mysql/debian.cnf
+**/debian.cnf
+
+# 旧git履歴のバックアップ(参照用に残すがコミット対象外)
+*/.git.bak/
+
+# 揮発性・自動生成・OS管理下のファイル
+machine-id
+mtab
+resolv.conf
+hostname
+adjtime
+*.pid
+*.sock
+
+# ログ・キャッシュ類(/etc配下に稀にあるもの)
+**/*.log
+**/cache/
+
+# systemdのランタイム生成物
+udev/hwdb.bin
+
+# 過去パスワードのハッシュ履歴(pam_unix opasswd) - ハッシュ化されていても除外
+security/opasswd
+# NTP認証キー(現状未使用だが念のため除外)
+chrony/chrony.keys
