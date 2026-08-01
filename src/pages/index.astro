@@ -1,0 +1,159 @@
+---
+import { getCollection } from "astro:content";
+
+const allEntries = await getCollection("entries");
+const sorted = [...allEntries].sort(
+  (a, b) => a.data.date.getTime() - b.data.date.getTime(),
+);
+
+type ScorePoint = { label: string; score: number; date: Date };
+const scorePoints: ScorePoint[] = sorted
+  .filter((e) => typeof e.data.metrics?.after?.score === "number")
+  .map((e) => ({
+    label: e.data.title,
+    score: e.data.metrics!.after!.score,
+    date: e.data.date,
+  }));
+
+const chartWidth = 640;
+const chartHeight = 200;
+const padding = 24;
+
+const scores = scorePoints.map((p) => p.score);
+const minScore = scores.length ? Math.min(...scores) : 0;
+const maxScore = scores.length ? Math.max(...scores) : 1;
+const scoreRange = maxScore - minScore || 1;
+
+const points = scorePoints.map((p, i) => {
+  const x =
+    scorePoints.length > 1
+      ? padding + (i / (scorePoints.length - 1)) * (chartWidth - padding * 2)
+      : chartWidth / 2;
+  const y =
+    chartHeight -
+    padding -
+    ((p.score - minScore) / scoreRange) * (chartHeight - padding * 2);
+  return { x, y, ...p };
+});
+
+const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(" ");
+
+const reverseChron = [...sorted].reverse();
+---
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>isucon-toolkit: tuning log</title>
+    <style>
+      body {
+        font-family: -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
+        max-width: 900px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        color: #1a1a1a;
+      }
+      h1 {
+        font-size: 1.4rem;
+      }
+      .chart-wrap {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 2rem;
+        overflow-x: auto;
+      }
+      .entry-list {
+        list-style: none;
+        padding: 0;
+      }
+      .entry-card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+      .entry-card a {
+        text-decoration: none;
+        color: #1a56db;
+        font-weight: 600;
+      }
+      .meta {
+        color: #666;
+        font-size: 0.85rem;
+        margin-top: 0.25rem;
+      }
+      .tag {
+        display: inline-block;
+        background: #eef2ff;
+        color: #3730a3;
+        border-radius: 4px;
+        padding: 0.1rem 0.5rem;
+        font-size: 0.75rem;
+        margin-right: 0.25rem;
+      }
+      .score-diff {
+        font-variant-numeric: tabular-nums;
+      }
+      circle {
+        fill: #1a56db;
+      }
+      polyline {
+        fill: none;
+        stroke: #1a56db;
+        stroke-width: 2;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>isucon-toolkit: tuning log</h1>
+
+    {
+      scorePoints.length > 0 && (
+        <div class="chart-wrap">
+          <svg width={chartWidth} height={chartHeight}>
+            <polyline points={polylinePoints} />
+            {points.map((p) => (
+              <circle cx={p.x} cy={p.y} r="4">
+                <title>
+                  {p.label}: {p.score}
+                </title>
+              </circle>
+            ))}
+          </svg>
+        </div>
+      )
+    }
+
+    <ul class="entry-list">
+      {
+        reverseChron.map((entry) => {
+          const before = entry.data.metrics?.before?.score;
+          const after = entry.data.metrics?.after?.score;
+          return (
+            <li class="entry-card">
+              <a href={`${import.meta.env.BASE_URL}entries/${entry.id}/`}>{entry.data.title}</a>
+              <div class="meta">
+                {entry.data.date.toISOString().slice(0, 10)}
+                {entry.data.repo && ` · ${entry.data.repo}`}
+                {entry.data.commit && ` · ${entry.data.commit}`}
+                {before != null && after != null && (
+                  <span class="score-diff">
+                    {" "}
+                    · score: {before} → {after}
+                  </span>
+                )}
+              </div>
+              <div class="meta">
+                {entry.data.tags.map((t) => (
+                  <span class="tag">{t}</span>
+                ))}
+              </div>
+            </li>
+          );
+        })
+      }
+    </ul>
+  </body>
+</html>

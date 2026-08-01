@@ -1,0 +1,144 @@
+---
+import { getCollection, render } from "astro:content";
+
+export async function getStaticPaths() {
+  const entries = await getCollection("entries");
+  return entries.map((entry) => ({
+    params: { id: entry.id },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+const { title, date, tags, commit, repo, metrics, logs } = entry.data;
+---
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>{title} | isucon-toolkit</title>
+    <style>
+      body {
+        font-family: -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
+        max-width: 760px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        color: #1a1a1a;
+        line-height: 1.7;
+      }
+      a.back {
+        color: #666;
+        font-size: 0.9rem;
+      }
+      .meta-panel {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 1rem 0 2rem;
+        font-size: 0.9rem;
+      }
+      .meta-panel dt {
+        font-weight: 600;
+        color: #666;
+        margin-top: 0.5rem;
+      }
+      .meta-panel dd {
+        margin: 0;
+      }
+      .tag {
+        display: inline-block;
+        background: #eef2ff;
+        color: #3730a3;
+        border-radius: 4px;
+        padding: 0.1rem 0.5rem;
+        font-size: 0.75rem;
+        margin-right: 0.25rem;
+      }
+      code {
+        background: #f5f5f5;
+        padding: 0.1rem 0.3rem;
+        border-radius: 4px;
+      }
+      pre code {
+        display: block;
+        padding: 1rem;
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="back" href={import.meta.env.BASE_URL}>← タイムラインに戻る</a>
+    <h1>{title}</h1>
+
+    <dl class="meta-panel">
+      <dt>日付</dt>
+      <dd>{date.toISOString().slice(0, 10)}</dd>
+
+      {repo && (
+        <>
+          <dt>対象リポジトリ</dt>
+          <dd>{repo}</dd>
+        </>
+      )}
+
+      {commit && (
+        <>
+          <dt>コミット</dt>
+          <dd><code>{commit}</code></dd>
+        </>
+      )}
+
+      {tags.length > 0 && (
+        <>
+          <dt>タグ</dt>
+          <dd>
+            {tags.map((t) => (
+              <span class="tag">{t}</span>
+            ))}
+          </dd>
+        </>
+      )}
+
+      {metrics?.before && (
+        <>
+          <dt>計測値(変更前)</dt>
+          <dd>
+            {Object.entries(metrics.before).map(([k, v]) => (
+              <span>{k}: {v} </span>
+            ))}
+          </dd>
+        </>
+      )}
+
+      {metrics?.after && (
+        <>
+          <dt>計測値(変更後)</dt>
+          <dd>
+            {Object.entries(metrics.after).map(([k, v]) => (
+              <span>{k}: {v} </span>
+            ))}
+          </dd>
+        </>
+      )}
+
+      {logs.length > 0 && (
+        <>
+          <dt>参照ログ</dt>
+          <dd>
+            <ul>
+              {logs.map((log) => (
+                <li>
+                  {log.label}: <code>{log.path}</code>
+                </li>
+              ))}
+            </ul>
+          </dd>
+        </>
+      )}
+    </dl>
+
+    <Content />
+  </body>
+</html>
