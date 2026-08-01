@@ -1,0 +1,6 @@
+{
+  "repos": {
+    "webapp": "https://github.com/your-org/your-webapp-repo",
+    "infra": "https://github.com/your-org/your-infra-repo"
+  }
+}

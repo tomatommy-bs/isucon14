@@ -9,7 +9,10 @@ const entries = defineCollection({
     tags: z.array(z.string()).default([]),
     // このチューニング変更を行ったコミットのハッシュ(短縮形でも可)
     commit: z.string().optional(),
-    // 対象リポジトリ名(例: webapp, nginx, mysql)。複数リポジトリを横断管理する場合に区別する
+    // commitへの完全なURL。指定があれば tuning-log.config.json の repo マッピングより優先される
+    commitUrl: z.string().url().optional(),
+    // 対象リポジトリ名(例: webapp, nginx, mysql)。複数リポジトリを横断管理する場合に区別する。
+    // tuning-log.config.json の repos に同名エントリがあれば commit へのリンクを自動生成する
     repo: z.string().optional(),
     // 自由形式のkey-value。グラフ化には metrics.after.score を用いる想定(AGENTS.md参照)
     metrics: z
@@ -18,12 +21,15 @@ const entries = defineCollection({
         after: z.record(z.string(), z.number()).optional(),
       })
       .optional(),
-    // ベンチマーク/メトリクスログへの相対パス参照(ログ本体はコピーしない)
+    // ベンチマーク/メトリクスログへの参照(ログ本体はコピーしない)
     logs: z
       .array(
         z.object({
           label: z.string(),
+          // 相対パス(サーバー上の実際の場所を示すドキュメント目的の参照)か、http(s)のURL
           path: z.string(),
+          // 任意。ログの要点を短く貼り付けておける(pt-query-digestの上位数件など)
+          excerpt: z.string().optional(),
         }),
       )
       .default([]),

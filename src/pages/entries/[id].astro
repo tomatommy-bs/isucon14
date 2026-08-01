@@ -1,39 +1,81 @@
 ---
 import { getCollection, render } from "astro:content";
+import { loadConfig } from "../../lib/config";
+import { resolveCommitUrl } from "../../lib/commit-link";
 
 export async function getStaticPaths() {
   const entries = await getCollection("entries");
-  return entries.map((entry) => ({
+  const sorted = [...entries].sort(
+    (a, b) => a.data.date.getTime() - b.data.date.getTime(),
+  );
+  return sorted.map((entry, i) => ({
     params: { id: entry.id },
-    props: { entry },
+    props: {
+      entry,
+      prev: i > 0 ? sorted[i - 1] : undefined,
+      next: i < sorted.length - 1 ? sorted[i + 1] : undefined,
+    },
   }));
 }
 
-const { entry } = Astro.props;
+const { entry, prev, next } = Astro.props;
 const { Content } = await render(entry);
-const { title, date, tags, commit, repo, metrics, logs } = entry.data;
+const { title, date, tags, commit, commitUrl, repo, metrics, logs } = entry.data;
+
+const config = loadConfig();
+const resolvedCommitUrl = resolveCommitUrl({ commit, commitUrl, repo }, config);
+
+function isUrl(path: string) {
+  return /^https?:\/\//.test(path);
+}
 ---
 
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
-    <title>{title} | isucon-toolkit</title>
+    <title>{title} | ISUCON14 tuning log</title>
     <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #1a1a1a;
+        --muted: #666;
+        --border: #ddd;
+        --accent: #1a56db;
+        --accent-bg: #eef2ff;
+        --accent-fg: #3730a3;
+        --code-bg: #f5f5f5;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #14161a;
+          --fg: #e8e8e8;
+          --muted: #9a9a9a;
+          --border: #333;
+          --accent: #7aa2ff;
+          --accent-bg: #1b2340;
+          --accent-fg: #b7c6ff;
+          --code-bg: #1e2126;
+        }
+      }
       body {
         font-family: -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
         max-width: 760px;
         margin: 2rem auto;
         padding: 0 1rem;
-        color: #1a1a1a;
+        color: var(--fg);
+        background: var(--bg);
         line-height: 1.7;
       }
+      a {
+        color: var(--accent);
+      }
       a.back {
-        color: #666;
+        color: var(--muted);
         font-size: 0.9rem;
       }
       .meta-panel {
-        border: 1px solid #ddd;
+        border: 1px solid var(--border);
         border-radius: 8px;
         padding: 1rem;
         margin: 1rem 0 2rem;
@@ -41,7 +83,7 @@ const { title, date, tags, commit, repo, metrics, logs } = entry.data;
       }
       .meta-panel dt {
         font-weight: 600;
-        color: #666;
+        color: var(--muted);
         margin-top: 0.5rem;
       }
       .meta-panel dd {
@@ -49,15 +91,15 @@ const { title, date, tags, commit, repo, metrics, logs } = entry.data;
       }
       .tag {
         display: inline-block;
-        background: #eef2ff;
-        color: #3730a3;
+        background: var(--accent-bg);
+        color: var(--accent-fg);
         border-radius: 4px;
         padding: 0.1rem 0.5rem;
         font-size: 0.75rem;
         margin-right: 0.25rem;
       }
       code {
-        background: #f5f5f5;
+        background: var(--code-bg);
         padding: 0.1rem 0.3rem;
         border-radius: 4px;
       }
@@ -65,6 +107,43 @@ const { title, date, tags, commit, repo, metrics, logs } = entry.data;
         display: block;
         padding: 1rem;
         overflow-x: auto;
+      }
+      .log-item {
+        margin-bottom: 0.5rem;
+      }
+      .log-path-row {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .copy-btn {
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--muted);
+        border-radius: 4px;
+        font-size: 0.7rem;
+        padding: 0.05rem 0.4rem;
+        cursor: pointer;
+      }
+      .log-excerpt {
+        background: var(--code-bg);
+        border-radius: 4px;
+        padding: 0.5rem;
+        margin-top: 0.25rem;
+        font-size: 0.8rem;
+        overflow-x: auto;
+        white-space: pre;
+      }
+      .prev-next {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 3rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.9rem;
+      }
+      .prev-next .placeholder {
+        visibility: hidden;
       }
     </style>
   </head>
@@ -86,7 +165,15 @@ const { title, date, tags, commit, repo, metrics, logs } = entry.data;
       {commit && (
         <>
           <dt>コミット</dt>
-          <dd><code>{commit}</code></dd>
+          <dd>
+            {resolvedCommitUrl ? (
+              <a href={resolvedCommitUrl} target="_blank" rel="noopener noreferrer">
+                <code>{commit}</code>
+              </a>
+            ) : (
+              <code>{commit}</code>
+            )}
+          </dd>
         </>
       )}
 
@@ -127,10 +214,25 @@ const { title, date, tags, commit, repo, metrics, logs } = entry.data;
         <>
           <dt>参照ログ</dt>
           <dd>
-            <ul>
+            <ul style="padding-left: 1.2rem; margin: 0;">
               {logs.map((log) => (
-                <li>
-                  {log.label}: <code>{log.path}</code>
+                <li class="log-item">
+                  <div class="log-path-row">
+                    {log.label}:
+                    {isUrl(log.path) ? (
+                      <a href={log.path} target="_blank" rel="noopener noreferrer">
+                        <code>{log.path}</code>
+                      </a>
+                    ) : (
+                      <>
+                        <code>{log.path}</code>
+                        <button class="copy-btn" data-copy-text={log.path}>
+                          コピー
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {log.excerpt && <pre class="log-excerpt">{log.excerpt}</pre>}
                 </li>
               ))}
             </ul>
@@ -140,5 +242,32 @@ const { title, date, tags, commit, repo, metrics, logs } = entry.data;
     </dl>
 
     <Content />
+
+    <div class="prev-next">
+      {prev ? (
+        <a href={`${import.meta.env.BASE_URL}entries/${prev.id}/`}>← {prev.data.title}</a>
+      ) : (
+        <span class="placeholder">-</span>
+      )}
+      {next ? (
+        <a href={`${import.meta.env.BASE_URL}entries/${next.id}/`}>{next.data.title} →</a>
+      ) : (
+        <span class="placeholder">-</span>
+      )}
+    </div>
+
+    <script>
+      document.querySelectorAll<HTMLButtonElement>(".copy-btn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const text = btn.dataset.copyText ?? "";
+          await navigator.clipboard.writeText(text);
+          const original = btn.textContent;
+          btn.textContent = "コピーしました";
+          setTimeout(() => {
+            btn.textContent = original;
+          }, 1500);
+        });
+      });
+    </script>
   </body>
 </html>

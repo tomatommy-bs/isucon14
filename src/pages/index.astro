@@ -1,5 +1,6 @@
 ---
 import { getCollection } from "astro:content";
+import { afterScore, beforeScore, isRegression } from "../lib/entry-helpers";
 
 const allEntries = await getCollection("entries");
 const sorted = [...allEntries].sort(
@@ -8,116 +9,316 @@ const sorted = [...allEntries].sort(
 
 type ScorePoint = { label: string; score: number; date: Date };
 const scorePoints: ScorePoint[] = sorted
-  .filter((e) => typeof e.data.metrics?.after?.score === "number")
+  .filter((e) => typeof afterScore(e.data) === "number")
   .map((e) => ({
     label: e.data.title,
-    score: e.data.metrics!.after!.score,
+    score: afterScore(e.data)!,
     date: e.data.date,
   }));
 
-const chartWidth = 640;
-const chartHeight = 200;
-const padding = 24;
+// --- チャートのレイアウト計算 ---
+const chartWidth = 680;
+const chartHeight = 240;
+const marginLeft = 56;
+const marginBottom = 32;
+const marginTop = 16;
+const marginRight = 16;
+const plotWidth = chartWidth - marginLeft - marginRight;
+const plotHeight = chartHeight - marginTop - marginBottom;
 
 const scores = scorePoints.map((p) => p.score);
-const minScore = scores.length ? Math.min(...scores) : 0;
-const maxScore = scores.length ? Math.max(...scores) : 1;
+const rawMin = scores.length ? Math.min(...scores) : 0;
+const rawMax = scores.length ? Math.max(...scores) : 1;
+// 上下に少し余白を持たせる
+const padAmount = (rawMax - rawMin) * 0.1 || Math.max(rawMax * 0.1, 1);
+const minScore = Math.max(0, rawMin - padAmount);
+const maxScore = rawMax + padAmount;
 const scoreRange = maxScore - minScore || 1;
+
+function scoreToY(score: number) {
+  return (
+    marginTop + plotHeight - ((score - minScore) / scoreRange) * plotHeight
+  );
+}
 
 const points = scorePoints.map((p, i) => {
   const x =
     scorePoints.length > 1
-      ? padding + (i / (scorePoints.length - 1)) * (chartWidth - padding * 2)
-      : chartWidth / 2;
-  const y =
-    chartHeight -
-    padding -
-    ((p.score - minScore) / scoreRange) * (chartHeight - padding * 2);
-  return { x, y, ...p };
+      ? marginLeft + (i / (scorePoints.length - 1)) * plotWidth
+      : marginLeft + plotWidth / 2;
+  return { x, y: scoreToY(p.score), ...p };
 });
-
 const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(" ");
 
+// Y軸目盛り(4分割)
+const yTickCount = 4;
+const yTicks = Array.from({ length: yTickCount + 1 }, (_, i) => {
+  const score = minScore + (scoreRange * i) / yTickCount;
+  return { score: Math.round(score), y: scoreToY(score) };
+});
+
+// X軸目盛り: 多すぎるとラベルが重なるので、最大6個程度に間引く
+const maxXLabels = 6;
+const xLabelStep = Math.max(1, Math.ceil(points.length / maxXLabels));
+const xTicks = points.filter((_, i) => i % xLabelStep === 0 || i === points.length - 1);
+
+// --- タイムライン一覧・フィルタ用データ ---
 const reverseChron = [...sorted].reverse();
+const allTags = [...new Set(sorted.flatMap((e) => e.data.tags))].sort();
+const allRepos = [...new Set(sorted.map((e) => e.data.repo).filter(Boolean))].sort();
+
+// --- サマリー統計 ---
+const totalEntries = sorted.length;
+const regressionCount = sorted.filter((e) => isRegression(e.data)).length;
+const firstScore = scorePoints[0]?.score;
+const latestScore = scorePoints[scorePoints.length - 1]?.score;
+const overallDelta =
+  firstScore != null && latestScore != null ? latestScore - firstScore : undefined;
 ---
 
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
-    <title>isucon-toolkit: tuning log</title>
+    <title>ISUCON14 tuning log</title>
     <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #1a1a1a;
+        --muted: #666;
+        --border: #ddd;
+        --accent: #1a56db;
+        --accent-bg: #eef2ff;
+        --accent-fg: #3730a3;
+        --warn-bg: #fff1f2;
+        --warn-fg: #9f1239;
+        --warn-border: #fecdd3;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #14161a;
+          --fg: #e8e8e8;
+          --muted: #9a9a9a;
+          --border: #333;
+          --accent: #7aa2ff;
+          --accent-bg: #1b2340;
+          --accent-fg: #b7c6ff;
+          --warn-bg: #341316;
+          --warn-fg: #ffb4c0;
+          --warn-border: #5c1f27;
+        }
+      }
       body {
         font-family: -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
         max-width: 900px;
         margin: 2rem auto;
         padding: 0 1rem;
-        color: #1a1a1a;
+        color: var(--fg);
+        background: var(--bg);
       }
       h1 {
         font-size: 1.4rem;
       }
+      .stats {
+        display: flex;
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        margin-bottom: 1.5rem;
+      }
+      .stat {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        min-width: 100px;
+      }
+      .stat .value {
+        font-size: 1.3rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .stat .label {
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
       .chart-wrap {
-        border: 1px solid #ddd;
+        border: 1px solid var(--border);
         border-radius: 8px;
         padding: 1rem;
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
         overflow-x: auto;
+      }
+      .axis-line {
+        stroke: var(--border);
+        stroke-width: 1;
+      }
+      .grid-line {
+        stroke: var(--border);
+        stroke-width: 1;
+        stroke-dasharray: 2 3;
+      }
+      .axis-label {
+        fill: var(--muted);
+        font-size: 11px;
+      }
+      .filters {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+        align-items: center;
+      }
+      .filter-btn {
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--fg);
+        border-radius: 999px;
+        padding: 0.15rem 0.7rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+      }
+      .filter-btn.active {
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+      }
+      .filter-clear {
+        font-size: 0.8rem;
+        color: var(--muted);
+        cursor: pointer;
+        text-decoration: underline;
+        background: none;
+        border: none;
       }
       .entry-list {
         list-style: none;
         padding: 0;
       }
       .entry-card {
-        border: 1px solid #ddd;
+        border: 1px solid var(--border);
         border-radius: 8px;
         padding: 1rem;
         margin-bottom: 1rem;
       }
       .entry-card a {
         text-decoration: none;
-        color: #1a56db;
+        color: var(--accent);
         font-weight: 600;
       }
       .meta {
-        color: #666;
+        color: var(--muted);
         font-size: 0.85rem;
         margin-top: 0.25rem;
       }
       .tag {
         display: inline-block;
-        background: #eef2ff;
-        color: #3730a3;
+        background: var(--accent-bg);
+        color: var(--accent-fg);
         border-radius: 4px;
         padding: 0.1rem 0.5rem;
         font-size: 0.75rem;
         margin-right: 0.25rem;
       }
+      .badge-regression {
+        display: inline-block;
+        background: var(--warn-bg);
+        color: var(--warn-fg);
+        border: 1px solid var(--warn-border);
+        border-radius: 4px;
+        padding: 0.1rem 0.5rem;
+        font-size: 0.75rem;
+        margin-left: 0.5rem;
+      }
       .score-diff {
         font-variant-numeric: tabular-nums;
       }
       circle {
-        fill: #1a56db;
+        fill: var(--accent);
       }
       polyline {
         fill: none;
-        stroke: #1a56db;
+        stroke: var(--accent);
         stroke-width: 2;
       }
     </style>
   </head>
   <body>
-    <h1>isucon-toolkit: tuning log</h1>
+    <h1>ISUCON14 tuning log</h1>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="value">{totalEntries}</div>
+        <div class="label">エントリ数</div>
+      </div>
+      {overallDelta != null && (
+        <div class="stat">
+          <div class="value">
+            {firstScore} → {latestScore}
+            <span style={{ color: overallDelta >= 0 ? "#16a34a" : "#dc2626" }}>
+              ({overallDelta >= 0 ? "+" : ""}
+              {overallDelta})
+            </span>
+          </div>
+          <div class="label">スコア推移(全体)</div>
+        </div>
+      )}
+      {regressionCount > 0 && (
+        <div class="stat">
+          <div class="value">{regressionCount}</div>
+          <div class="label">効果なし/低下したエントリ</div>
+        </div>
+      )}
+    </div>
 
     {
       scorePoints.length > 0 && (
         <div class="chart-wrap">
           <svg width={chartWidth} height={chartHeight}>
+            {/* Y軸グリッド線・目盛りラベル */}
+            {yTicks.map((t) => (
+              <>
+                <line
+                  x1={marginLeft}
+                  y1={t.y}
+                  x2={chartWidth - marginRight}
+                  y2={t.y}
+                  class="grid-line"
+                />
+                <text x={marginLeft - 8} y={t.y + 4} text-anchor="end" class="axis-label">
+                  {t.score}
+                </text>
+              </>
+            ))}
+            {/* 軸線 */}
+            <line
+              x1={marginLeft}
+              y1={marginTop}
+              x2={marginLeft}
+              y2={marginTop + plotHeight}
+              class="axis-line"
+            />
+            <line
+              x1={marginLeft}
+              y1={marginTop + plotHeight}
+              x2={chartWidth - marginRight}
+              y2={marginTop + plotHeight}
+              class="axis-line"
+            />
+            {/* X軸ラベル */}
+            {xTicks.map((t) => (
+              <text
+                x={t.x}
+                y={marginTop + plotHeight + 18}
+                text-anchor="middle"
+                class="axis-label"
+              >
+                {t.date.toISOString().slice(5, 10)}
+              </text>
+            ))}
             <polyline points={polylinePoints} />
             {points.map((p) => (
               <circle cx={p.x} cy={p.y} r="4">
                 <title>
-                  {p.label}: {p.score}
+                  {p.date.toISOString().slice(0, 10)} {p.label}: {p.score}
                 </title>
               </circle>
             ))}
@@ -126,14 +327,36 @@ const reverseChron = [...sorted].reverse();
       )
     }
 
-    <ul class="entry-list">
+    {(allTags.length > 0 || allRepos.length > 0) && (
+      <div class="filters" id="filters">
+        {allRepos.map((r) => (
+          <button class="filter-btn" data-filter-type="repo" data-filter-value={r}>
+            {r}
+          </button>
+        ))}
+        {allTags.map((t) => (
+          <button class="filter-btn" data-filter-type="tag" data-filter-value={t}>
+            #{t}
+          </button>
+        ))}
+        <button class="filter-clear" id="filter-clear">クリア</button>
+      </div>
+    )}
+
+    <ul class="entry-list" id="entry-list">
       {
         reverseChron.map((entry) => {
-          const before = entry.data.metrics?.before?.score;
-          const after = entry.data.metrics?.after?.score;
+          const before = beforeScore(entry.data);
+          const after = afterScore(entry.data);
+          const regression = isRegression(entry.data);
           return (
-            <li class="entry-card">
+            <li
+              class="entry-card"
+              data-tags={entry.data.tags.join(",")}
+              data-repo={entry.data.repo ?? ""}
+            >
               <a href={`${import.meta.env.BASE_URL}entries/${entry.id}/`}>{entry.data.title}</a>
+              {regression && <span class="badge-regression">スコア低下/効果なし</span>}
               <div class="meta">
                 {entry.data.date.toISOString().slice(0, 10)}
                 {entry.data.repo && ` · ${entry.data.repo}`}
@@ -155,5 +378,49 @@ const reverseChron = [...sorted].reverse();
         })
       }
     </ul>
+
+    <script>
+      const filterButtons = document.querySelectorAll<HTMLButtonElement>(".filter-btn");
+      const clearButton = document.getElementById("filter-clear");
+      const cards = document.querySelectorAll<HTMLLIElement>(".entry-card");
+
+      let activeTag: string | null = null;
+      let activeRepo: string | null = null;
+
+      function applyFilters() {
+        cards.forEach((card) => {
+          const tags = (card.dataset.tags ?? "").split(",");
+          const repo = card.dataset.repo ?? "";
+          const tagMatch = !activeTag || tags.includes(activeTag);
+          const repoMatch = !activeRepo || repo === activeRepo;
+          card.style.display = tagMatch && repoMatch ? "" : "none";
+        });
+        filterButtons.forEach((btn) => {
+          const isActive =
+            (btn.dataset.filterType === "tag" && btn.dataset.filterValue === activeTag) ||
+            (btn.dataset.filterType === "repo" && btn.dataset.filterValue === activeRepo);
+          btn.classList.toggle("active", isActive);
+        });
+      }
+
+      filterButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const type = btn.dataset.filterType;
+          const value = btn.dataset.filterValue ?? null;
+          if (type === "tag") {
+            activeTag = activeTag === value ? null : value;
+          } else if (type === "repo") {
+            activeRepo = activeRepo === value ? null : value;
+          }
+          applyFilters();
+        });
+      });
+
+      clearButton?.addEventListener("click", () => {
+        activeTag = null;
+        activeRepo = null;
+        applyFilters();
+      });
+    </script>
   </body>
 </html>
