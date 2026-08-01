@@ -20,14 +20,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install, build
+      - name: Install, build, upload Pages artifact
         uses: withastro/action@v3
         with:
           node-version: "22"
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./dist
 
   deploy:
     needs: build
