@@ -666,6 +666,28 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
     const [chairs] = await ctx.var.dbConn.query<Array<Chair & RowDataPacket>>(
       "SELECT * FROM chairs",
     );
+    // 未完了(COMPLETED以外)のライドを1件でも抱えている椅子のID集合
+    const [busyChairRows] = await ctx.var.dbConn.query<
+      Array<{ chair_id: string } & RowDataPacket>
+    >(
+      "SELECT DISTINCT chair_id FROM rides WHERE chair_id IS NOT NULL AND latest_status <> 'COMPLETED'",
+    );
+    const busyChairIds = new Set(busyChairRows.map((r) => r.chair_id));
+    // 各椅子の最新位置情報をまとめて取得
+    const [latestLocations] = await ctx.var.dbConn.query<
+      Array<ChairLocation & RowDataPacket>
+    >(
+      `SELECT cl.* FROM chair_locations cl
+       INNER JOIN (
+         SELECT chair_id, MAX(created_at) AS max_created_at
+         FROM chair_locations
+         GROUP BY chair_id
+       ) latest ON cl.chair_id = latest.chair_id AND cl.created_at = latest.max_created_at`,
+    );
+    const latestLocationByChairId = new Map(
+      latestLocations.map((l) => [l.chair_id, l]),
+    );
+
     const nearbyChairs: Array<{
       id: string;
       name: string;
@@ -674,30 +696,10 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
     }> = [];
     for (const chair of chairs) {
       if (!chair.is_active) continue;
-      const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-        "SELECT * FROM rides WHERE chair_id = ? ORDER BY created_at DESC",
-        [chair.id],
-      );
-      let skip = false;
-      for (const ride of rides) {
-        // 過去にライドが存在し、かつ、それが完了していない場合はスキップ
-        if (ride.latest_status !== "COMPLETED") {
-          skip = true;
-          break;
-        }
-      }
-      if (skip) {
-        continue;
-      }
+      // 過去にライドが存在し、かつ、それが完了していない場合はスキップ
+      if (busyChairIds.has(chair.id)) continue;
 
-      // 最新の位置情報を取得
-      const [[chairLocation]] = await ctx.var.dbConn.query<
-        Array<ChairLocation & RowDataPacket>
-      >(
-        "SELECT * FROM chair_locations WHERE chair_id = ? ORDER BY created_at DESC LIMIT 1",
-        [chair.id],
-      );
-
+      const chairLocation = latestLocationByChairId.get(chair.id);
       if (!chairLocation) {
         continue;
       }
