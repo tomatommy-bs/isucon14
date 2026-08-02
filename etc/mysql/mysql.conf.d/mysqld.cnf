@@ -83,6 +83,12 @@ innodb_flush_log_at_trx_commit = 2
 sync_binlog = 0
 
 # ISUCON measurement: slow query log (persisted, was previously only SET GLOBAL and lost on restart)
-slow_query_log = 1
+slow_query_log = 0
 slow_query_log_file = /var/log/mysql/mysql-slow.log
 long_query_time = 0
+
+# ISUCON tuning: バイナリログの無効化。MySQL 8はlog_binが未設定でもデフォルトON。
+# レプリケーション・PITRを行わない単一ノード構成のため、書き込みのたびのbinlog書き込み
+# コストが純粋なオーバーヘッドになっている(SHOW BINARY LOGSで100MB超のファイルが多数
+# 蓄積していることを確認済み)。
+disable_log_bin
