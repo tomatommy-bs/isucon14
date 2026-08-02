@@ -521,15 +521,16 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
       await ctx.var.dbConn.rollback();
       return ctx.json({ retry_after_ms: 30 }, 200);
     }
-    const [[yetSentRideStatus]] = await ctx.var.dbConn.query<
+    const [rideStatuses] = await ctx.var.dbConn.query<
       Array<RideStatus & RowDataPacket>
     >(
-      "SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1",
+      "SELECT * FROM ride_statuses WHERE ride_id = ? ORDER BY created_at ASC",
       [ride.id],
     );
+    const yetSentRideStatus = rideStatuses.find((s) => s.app_sent_at === null);
     const status = yetSentRideStatus
       ? yetSentRideStatus.status
-      : await getLatestRideStatus(ctx.var.dbConn, ride.id);
+      : rideStatuses[rideStatuses.length - 1].status;
 
     const fare = await calculateDiscountedFare(
       ctx.var.dbConn,
