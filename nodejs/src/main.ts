@@ -34,14 +34,28 @@ import {
 } from "./owner_handlers.js";
 import type { Environment } from "./types/hono.js";
 
-const pool = createPool({
-  host: process.env.ISUCON_DB_HOST || "127.0.0.1",
-  port: Number(process.env.ISUCON_DB_PORT || "3306"),
-  user: process.env.ISUCON_DB_USER || "isucon",
-  password: process.env.ISUCON_DB_PASSWORD || "isucon",
-  database: process.env.ISUCON_DB_NAME || "isuride",
-  timezone: "+00:00",
-});
+const dbHost = process.env.ISUCON_DB_HOST || "127.0.0.1";
+// DBが同一ホスト上にある場合は、TCPループバックよりオーバーヘッドの小さいUnixソケットで接続する。
+// DBが別ホストの構成に切り替わった場合はISUCON_DB_HOSTがlocalhost系でなくなるのでTCPにフォールバックする。
+const isLocalDb = dbHost === "127.0.0.1" || dbHost === "localhost";
+const pool = createPool(
+  isLocalDb
+    ? {
+        socketPath: process.env.ISUCON_DB_SOCKET || "/var/run/mysqld/mysqld.sock",
+        user: process.env.ISUCON_DB_USER || "isucon",
+        password: process.env.ISUCON_DB_PASSWORD || "isucon",
+        database: process.env.ISUCON_DB_NAME || "isuride",
+        timezone: "+00:00",
+      }
+    : {
+        host: dbHost,
+        port: Number(process.env.ISUCON_DB_PORT || "3306"),
+        user: process.env.ISUCON_DB_USER || "isucon",
+        password: process.env.ISUCON_DB_PASSWORD || "isucon",
+        database: process.env.ISUCON_DB_NAME || "isuride",
+        timezone: "+00:00",
+      },
+);
 
 const app = new Hono<Environment>();
 app.use(logger());
