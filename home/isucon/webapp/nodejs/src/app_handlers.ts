@@ -12,7 +12,6 @@ import {
   INITIAL_FARE,
   calculateDistance,
   calculateFare,
-  getLatestRideStatus,
 } from "./common.js";
 import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
 import type { Environment } from "./types/hono.js";
@@ -406,7 +405,7 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       await ctx.var.dbConn.rollback();
       return ctx.text("ride not found", 404);
     }
-    const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
+    const status = ride.latest_status;
     if (status !== "ARRIVED") {
       await ctx.var.dbConn.rollback();
       return ctx.text("not arrived yet", 400);
@@ -414,8 +413,8 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
 
     const completedAt = new Date();
     const [result] = await ctx.var.dbConn.query<ResultSetHeader>(
-      "UPDATE rides SET evaluation = ?, updated_at = ? WHERE id = ?",
-      [reqJson.evaluation, completedAt, rideId],
+      "UPDATE rides SET evaluation = ?, updated_at = ?, latest_status = ? WHERE id = ?",
+      [reqJson.evaluation, completedAt, "COMPLETED", rideId],
     );
     if (result.affectedRows === 0) {
       await ctx.var.dbConn.rollback();
@@ -682,8 +681,7 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
       let skip = false;
       for (const ride of rides) {
         // 過去にライドが存在し、かつ、それが完了していない場合はスキップ
-        const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
-        if (status !== "COMPLETED") {
+        if (ride.latest_status !== "COMPLETED") {
           skip = true;
           break;
         }
