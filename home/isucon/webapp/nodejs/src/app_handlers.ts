@@ -398,7 +398,7 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
   }
   await ctx.var.dbConn.beginTransaction();
   try {
-    let [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
+    const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE id = ?",
       rideId,
     );
@@ -412,9 +412,10 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       return ctx.text("not arrived yet", 400);
     }
 
+    const completedAt = new Date();
     const [result] = await ctx.var.dbConn.query<ResultSetHeader>(
-      "UPDATE rides SET evaluation = ? WHERE id = ?",
-      [reqJson.evaluation, rideId],
+      "UPDATE rides SET evaluation = ?, updated_at = ? WHERE id = ?",
+      [reqJson.evaluation, completedAt, rideId],
     );
     if (result.affectedRows === 0) {
       await ctx.var.dbConn.rollback();
@@ -425,15 +426,6 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)",
       [ulid(), rideId, "COMPLETED"],
     );
-
-    [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-      "SELECT * FROM rides WHERE id = ?",
-      rideId,
-    );
-    if (!ride) {
-      await ctx.var.dbConn.rollback();
-      return ctx.text("ride not found", 404);
-    }
 
     const [[paymentToken]] = await ctx.var.dbConn.query<
       Array<PaymentToken & RowDataPacket>
@@ -474,7 +466,7 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
     await ctx.var.dbConn.commit();
     return ctx.json(
       {
-        completed_at: ride.updated_at.getTime(),
+        completed_at: completedAt.getTime(),
       },
       200,
     );
