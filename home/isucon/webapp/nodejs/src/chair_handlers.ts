@@ -72,20 +72,18 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
       "SELECT * FROM chair_locations WHERE chair_id = ? ORDER BY created_at DESC LIMIT 1",
       [chair.id],
     );
+    const recordedAt = new Date();
     await ctx.var.dbConn.query(
-      "INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (?, ?, ?, ?)",
-      [chairLocationID, chair.id, reqJson.latitude, reqJson.longitude],
+      "INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)",
+      [chairLocationID, chair.id, reqJson.latitude, reqJson.longitude, recordedAt],
     );
-    const [[location]] = await ctx.var.dbConn.query<
-      Array<ChairLocation & RowDataPacket>
-    >("SELECT * FROM chair_locations WHERE id = ?", [chairLocationID]);
     if (prevLocation) {
       const distance =
         Math.abs(reqJson.latitude - prevLocation.latitude) +
         Math.abs(reqJson.longitude - prevLocation.longitude);
       await ctx.var.dbConn.query(
         "UPDATE chairs SET total_distance = total_distance + ?, total_distance_updated_at = ? WHERE id = ?",
-        [distance, location.created_at, chair.id],
+        [distance, recordedAt, chair.id],
       );
     }
     const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
@@ -118,7 +116,7 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
       }
     }
     await ctx.var.dbConn.commit();
-    return ctx.json({ recorded_at: location.created_at.getTime() }, 200);
+    return ctx.json({ recorded_at: recordedAt.getTime() }, 200);
   } catch (e) {
     await ctx.var.dbConn.rollback();
     return ctx.text(`${e}`, 500);
