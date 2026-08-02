@@ -67,6 +67,7 @@ export const ownerGetSales = async (ctx: Context<Environment>) => {
       sales,
     }));
 
+    await ctx.var.dbConn.commit();
     return ctx.json({
       total_sales: totalSales,
       chairs: chairSales,

@@ -86,6 +86,7 @@ export const appPostUsers = async (ctx: Context<Environment>) => {
         `INV_${reqJson.invitation_code}`,
       );
       if (coupons.length >= 3) {
+        await ctx.var.dbConn.rollback();
         return ctx.text("この招待コードは使用できません。", 400);
       }
 
@@ -95,6 +96,7 @@ export const appPostUsers = async (ctx: Context<Environment>) => {
         [reqJson.invitation_code],
       );
       if (inviter.length === 0) {
+        await ctx.var.dbConn.rollback();
         return ctx.text("この招待コードは使用できません。", 400);
       }
 
@@ -252,6 +254,7 @@ export const appPostRides = async (ctx: Context<Environment>) => {
       [user.id],
     );
     if (has_active) {
+      await ctx.var.dbConn.rollback();
       return ctx.text("ride already exists", 409);
     }
     await ctx.var.dbConn.query(
@@ -400,10 +403,12 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       rideId,
     );
     if (!ride) {
+      await ctx.var.dbConn.rollback();
       return ctx.text("ride not found", 404);
     }
     const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
     if (status !== "ARRIVED") {
+      await ctx.var.dbConn.rollback();
       return ctx.text("not arrived yet", 400);
     }
 
@@ -412,6 +417,7 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       [reqJson.evaluation, rideId],
     );
     if (result.affectedRows === 0) {
+      await ctx.var.dbConn.rollback();
       return ctx.text("ride not found", 404);
     }
 
@@ -425,6 +431,7 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       rideId,
     );
     if (!ride) {
+      await ctx.var.dbConn.rollback();
       return ctx.text("ride not found", 404);
     }
 
@@ -432,6 +439,7 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       Array<PaymentToken & RowDataPacket>
     >("SELECT * FROM payment_tokens WHERE user_id = ?", [ride.user_id]);
     if (!paymentToken) {
+      await ctx.var.dbConn.rollback();
       return ctx.text("payment token not registered", 400);
     }
     const fare = await calculateDiscountedFare(
@@ -503,13 +511,14 @@ type AppGetNotificationResponse = {
 export const appGetNotification = async (ctx: Context<Environment>) => {
   let response: AppGetNotificationResponse;
   const user = ctx.var.user;
-  ctx.var.dbConn.beginTransaction();
+  await ctx.var.dbConn.beginTransaction();
   try {
     const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
       "SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
       [user.id],
     );
     if (!ride) {
+      await ctx.var.dbConn.rollback();
       return ctx.json({ retry_after_ms: 30 }, 200);
     }
     const [[yetSentRideStatus]] = await ctx.var.dbConn.query<
