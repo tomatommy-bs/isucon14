@@ -135,6 +135,7 @@ export const chairGetNotification = async (ctx: Context<Environment>) => {
       [chair.id],
     );
     if (!ride) {
+      await ctx.var.dbConn.rollback();
       return ctx.json({ retry_after_ms: 30 }, 200);
     }
 
@@ -200,9 +201,11 @@ export const chairPostRideStatus = async (ctx: Context<Environment>) => {
       [rideID],
     );
     if (!ride) {
+      await ctx.var.dbConn.rollback();
       return ctx.text("ride not found", 404);
     }
     if (ride.chair_id !== chair.id) {
+      await ctx.var.dbConn.rollback();
       return ctx.text("not assigned to this ride", 400);
     }
     switch (reqJson.status) {
@@ -217,6 +220,7 @@ export const chairPostRideStatus = async (ctx: Context<Environment>) => {
       case "CARRYING": {
         const status = await getLatestRideStatus(ctx.var.dbConn, ride.id);
         if (status !== "PICKUP") {
+          await ctx.var.dbConn.rollback();
           return ctx.text("chair has not arrived yet", 400);
         }
         await ctx.var.dbConn.query(
@@ -226,6 +230,7 @@ export const chairPostRideStatus = async (ctx: Context<Environment>) => {
         break;
       }
       default:
+        await ctx.var.dbConn.rollback();
         return ctx.text("invalid status", 400);
     }
     await ctx.var.dbConn.commit();
