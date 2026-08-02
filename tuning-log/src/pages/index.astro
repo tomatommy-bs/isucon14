@@ -1,7 +1,10 @@
 ---
 import { getCollection } from "astro:content";
 import { afterScore, beforeScore, isRegression } from "../lib/entry-helpers";
+import { loadConfig } from "../lib/config";
+import { resolveCommitUrl } from "../lib/commit-link";
 
+const config = loadConfig();
 const allEntries = await getCollection("entries");
 const sorted = [...allEntries].sort(
   (a, b) => a.data.date.getTime() - b.data.date.getTime(),
@@ -80,7 +83,7 @@ const overallDelta =
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width" />
-    <title>ISUCON14 tuning log</title>
+    <title>isucon-toolkit: tuning log</title>
     <style>
       :root {
         --bg: #ffffff;
@@ -231,6 +234,15 @@ const overallDelta =
       .score-diff {
         font-variant-numeric: tabular-nums;
       }
+      .commit-link {
+        font-family: ui-monospace, monospace;
+      }
+      .meta code {
+        background: var(--accent-bg);
+        color: var(--accent-fg);
+        border-radius: 3px;
+        padding: 0 0.25rem;
+      }
       circle {
         fill: var(--accent);
       }
@@ -242,7 +254,7 @@ const overallDelta =
     </style>
   </head>
   <body>
-    <h1>ISUCON14 tuning log</h1>
+    <h1>isucon-toolkit: tuning log</h1>
 
     <div class="stats">
       <div class="stat">
@@ -349,6 +361,14 @@ const overallDelta =
           const before = beforeScore(entry.data);
           const after = afterScore(entry.data);
           const regression = isRegression(entry.data);
+          const commitUrl = resolveCommitUrl(
+            {
+              commit: entry.data.commit,
+              commitUrl: entry.data.commitUrl,
+              repo: entry.data.repo,
+            },
+            config,
+          );
           return (
             <li
               class="entry-card"
@@ -360,7 +380,23 @@ const overallDelta =
               <div class="meta">
                 {entry.data.date.toISOString().slice(0, 10)}
                 {entry.data.repo && ` · ${entry.data.repo}`}
-                {entry.data.commit && ` · ${entry.data.commit}`}
+                {entry.data.commit && (
+                  <>
+                    {" · "}
+                    {commitUrl ? (
+                      <a
+                        class="commit-link"
+                        href={commitUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {entry.data.commit}
+                      </a>
+                    ) : (
+                      <code>{entry.data.commit}</code>
+                    )}
+                  </>
+                )}
                 {before != null && after != null && (
                   <span class="score-diff">
                     {" "}
