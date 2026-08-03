@@ -18,7 +18,6 @@ import { requestPaymentGatewayPostPayment } from "./payment_gateway.js";
 import type { Environment } from "./types/hono.js";
 import type {
   Chair,
-  ChairLocation,
   Coordinate,
   Coupon,
   Owner,
@@ -660,20 +659,6 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
       "SELECT DISTINCT chair_id FROM rides WHERE chair_id IS NOT NULL AND latest_status <> 'COMPLETED'",
     );
     const busyChairIds = new Set(busyChairRows.map((r) => r.chair_id));
-    // 各椅子の最新位置情報をまとめて取得
-    const [latestLocations] = await ctx.var.dbConn.query<
-      Array<ChairLocation & RowDataPacket>
-    >(
-      `SELECT cl.* FROM chair_locations cl
-       INNER JOIN (
-         SELECT chair_id, MAX(created_at) AS max_created_at
-         FROM chair_locations
-         GROUP BY chair_id
-       ) latest ON cl.chair_id = latest.chair_id AND cl.created_at = latest.max_created_at`,
-    );
-    const latestLocationByChairId = new Map(
-      latestLocations.map((l) => [l.chair_id, l]),
-    );
 
     const nearbyChairs: Array<{
       id: string;
@@ -686,8 +671,8 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
       // 過去にライドが存在し、かつ、それが完了していない場合はスキップ
       if (busyChairIds.has(chair.id)) continue;
 
-      const chairLocation = latestLocationByChairId.get(chair.id);
-      if (!chairLocation) {
+      // まだ一度も位置情報を送信していない椅子はスキップ
+      if (chair.latest_latitude == null || chair.latest_longitude == null) {
         continue;
       }
 
@@ -695,8 +680,8 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
         calculateDistance(
           coordinate.latitude,
           coordinate.longitude,
-          chairLocation.latitude,
-          chairLocation.longitude,
+          chair.latest_latitude,
+          chair.latest_longitude,
         ) <= distance
       ) {
         nearbyChairs.push({
@@ -704,8 +689,8 @@ export const appGetNearbyChairs = async (ctx: Context<Environment>) => {
           name: chair.name,
           model: chair.model,
           current_coordinate: {
-            latitude: chairLocation.latitude,
-            longitude: chairLocation.longitude,
+            latitude: chair.latest_latitude,
+            longitude: chair.latest_longitude,
           },
         });
       }
