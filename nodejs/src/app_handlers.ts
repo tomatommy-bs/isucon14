@@ -163,9 +163,21 @@ export const appGetRides = async (ctx: Context<Environment>) => {
   await ctx.var.dbConn.beginTransaction();
   const items: GetAppRidesResponseItem[] = [];
   try {
-    const [rides] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-      `SELECT r.* FROM rides r
+    const [rides] = await ctx.var.dbConn.query<
+      Array<
+        Ride &
+          RowDataPacket & {
+            chair_name: string;
+            chair_model: string;
+            owner_name: string;
+          }
+      >
+    >(
+      `SELECT r.*, c.name AS chair_name, c.model AS chair_model, o.name AS owner_name
+       FROM rides r
        JOIN ride_statuses rs ON rs.ride_id = r.id
+       JOIN chairs c ON c.id = r.chair_id
+       JOIN owners o ON o.id = c.owner_id
        WHERE r.user_id = ?
          AND rs.created_at = (SELECT MAX(created_at) FROM ride_statuses rs2 WHERE rs2.ride_id = r.id)
          AND rs.status = 'COMPLETED'
@@ -175,12 +187,6 @@ export const appGetRides = async (ctx: Context<Environment>) => {
     for (const ride of rides) {
       const fare = calculateDiscountedFareForRide(ride);
 
-      const [[chair]] = await ctx.var.dbConn.query<
-        Array<Chair & RowDataPacket>
-      >("SELECT * FROM chairs WHERE id = ?", [ride.chair_id]);
-      const [[owner]] = await ctx.var.dbConn.query<
-        Array<Owner & RowDataPacket>
-      >("SELECT * FROM owners WHERE id = ?", [chair.owner_id]);
       const item = {
         id: ride.id,
         pickup_coordinate: {
@@ -196,10 +202,10 @@ export const appGetRides = async (ctx: Context<Environment>) => {
         requested_at: ride.created_at.getTime(),
         completed_at: ride.updated_at.getTime(),
         chair: {
-          id: chair.id,
-          name: chair.name,
-          model: chair.model,
-          owner: owner.name,
+          id: ride.chair_id,
+          name: ride.chair_name,
+          model: ride.chair_model,
+          owner: ride.owner_name,
         },
       };
       items.push(item);
