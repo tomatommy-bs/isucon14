@@ -51,6 +51,7 @@ export type Ride = {
   created_at: Date;
   updated_at: Date;
   latest_status: string;
+  discount: number;
 };
 
 export type RideStatus = {

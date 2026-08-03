@@ -10,6 +10,7 @@ import {
   ErroredUpstream,
   FARE_PER_DISTANCE,
   INITIAL_FARE,
+  calculateDiscountedFareForRide,
   calculateDistance,
   calculateFare,
 } from "./common.js";
@@ -173,15 +174,7 @@ export const appGetRides = async (ctx: Context<Environment>) => {
       [user.id],
     );
     for (const ride of rides) {
-      const fare = await calculateDiscountedFare(
-        ctx.var.dbConn,
-        user.id,
-        ride,
-        ride.pickup_latitude,
-        ride.pickup_longitude,
-        ride.destination_latitude,
-        ride.destination_longitude,
-      );
+      const fare = calculateDiscountedFareForRide(ride);
 
       const [[chair]] = await ctx.var.dbConn.query<
         Array<Chair & RowDataPacket>
@@ -274,6 +267,7 @@ export const appPostRides = async (ctx: Context<Environment>) => {
     const [[{ "COUNT(*)": rideCount }]] = await ctx.var.dbConn.query<
       Array<CountResult & RowDataPacket>
     >("SELECT COUNT(*) FROM rides WHERE user_id = ?", [user.id]);
+    let discount = 0;
     if (rideCount === 1) {
       // 初回利用で、初回利用クーポンがあれば必ず使う
       const [[coupon]] = await ctx.var.dbConn.query<
@@ -293,12 +287,14 @@ export const appPostRides = async (ctx: Context<Environment>) => {
         );
 
         if (coupon) {
+          discount = coupon.discount;
           await ctx.var.dbConn.query(
             "UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = ?",
             [rideId, user.id, coupon.code],
           );
         }
       } else {
+        discount = coupon.discount;
         await ctx.var.dbConn.query(
           "UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = 'CP_NEW2024'",
           [rideId, user.id],
@@ -313,25 +309,32 @@ export const appPostRides = async (ctx: Context<Environment>) => {
         [user.id],
       );
       if (coupon) {
+        discount = coupon.discount;
         await ctx.var.dbConn.query(
           "UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = ?",
           [rideId, user.id, coupon.code],
         );
       }
     }
-    const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
-      "SELECT * FROM rides WHERE id = ?",
-      [rideId],
-    );
-    const fare = await calculateDiscountedFare(
-      ctx.var.dbConn,
-      user.id,
-      ride,
-      reqJson.pickup_coordinate.latitude,
-      reqJson.pickup_coordinate.longitude,
-      reqJson.destination_coordinate.latitude,
-      reqJson.destination_coordinate.longitude,
-    );
+    if (discount > 0) {
+      await ctx.var.dbConn.query("UPDATE rides SET discount = ? WHERE id = ?", [
+        discount,
+        rideId,
+      ]);
+    }
+    const fare =
+      INITIAL_FARE +
+      Math.max(
+        FARE_PER_DISTANCE *
+          calculateDistance(
+            reqJson.pickup_coordinate.latitude,
+            reqJson.pickup_coordinate.longitude,
+            reqJson.destination_coordinate.latitude,
+            reqJson.destination_coordinate.longitude,
+          ) -
+          discount,
+        0,
+      );
     await ctx.var.dbConn.commit();
     return ctx.json(
       {
@@ -433,15 +436,7 @@ export const appPostRideEvaluatation = async (ctx: Context<Environment>) => {
       await ctx.var.dbConn.rollback();
       return ctx.text("payment token not registered", 400);
     }
-    const fare = await calculateDiscountedFare(
-      ctx.var.dbConn,
-      ride.user_id,
-      ride,
-      ride.pickup_latitude,
-      ride.pickup_longitude,
-      ride.destination_latitude,
-      ride.destination_longitude,
-    );
+    const fare = calculateDiscountedFareForRide(ride);
     const paymentGatewayRequest = { amount: fare };
 
     const [[{ value: paymentGatewayURL }]] = await ctx.var.dbConn.query<
@@ -523,15 +518,7 @@ export const appGetNotification = async (ctx: Context<Environment>) => {
       ? yetSentRideStatus.status
       : rideStatuses[rideStatuses.length - 1].status;
 
-    const fare = await calculateDiscountedFare(
-      ctx.var.dbConn,
-      user.id,
-      ride,
-      ride.pickup_latitude,
-      ride.pickup_longitude,
-      ride.destination_latitude,
-      ride.destination_longitude,
-    );
+    const fare = calculateDiscountedFareForRide(ride);
 
     response = {
       data: {
