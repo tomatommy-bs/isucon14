@@ -81,8 +81,14 @@ export const chairPostCoordinate = async (ctx: Context<Environment>) => {
         Math.abs(reqJson.latitude - prevLocation.latitude) +
         Math.abs(reqJson.longitude - prevLocation.longitude);
       await ctx.var.dbConn.query(
-        "UPDATE chairs SET total_distance = total_distance + ?, total_distance_updated_at = ? WHERE id = ?",
-        [distance, recordedAt, chair.id],
+        "UPDATE chairs SET total_distance = total_distance + ?, total_distance_updated_at = ?, latest_latitude = ?, latest_longitude = ? WHERE id = ?",
+        [distance, recordedAt, reqJson.latitude, reqJson.longitude, chair.id],
+      );
+    } else {
+      // この椅子にとって初めての位置情報登録(累積走行距離は加算しない)
+      await ctx.var.dbConn.query(
+        "UPDATE chairs SET latest_latitude = ?, latest_longitude = ? WHERE id = ?",
+        [reqJson.latitude, reqJson.longitude, chair.id],
       );
     }
     const [[ride]] = await ctx.var.dbConn.query<Array<Ride & RowDataPacket>>(
