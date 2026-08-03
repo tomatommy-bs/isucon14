@@ -1,5 +1,4 @@
-import type { Connection, RowDataPacket } from "mysql2/promise";
-import type { Ride, RideStatus } from "./types/models.js";
+import type { Ride } from "./types/models.js";
 
 export const INITIAL_FARE = 500;
 export const FARE_PER_DISTANCE = 100;
@@ -40,17 +39,18 @@ export const calculateSale = (ride: Ride): number => {
   );
 };
 
-export const getLatestRideStatus = async (
-  dbConn: Connection,
-  rideId: string,
-): Promise<string> => {
-  const [[{ status }]] = await dbConn.query<
-    Array<Pick<RideStatus, "status"> & RowDataPacket>
-  >(
-    "SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1",
-    [rideId],
-  );
-  return status;
+// rides.discount(ライド作成時に確定し、以後変化しないクーポン割引額のキャッシュ列)を
+// 使って、coupons.used_byへの追加クエリなしに割引後運賃を計算する。
+export const calculateDiscountedFareForRide = (ride: Ride): number => {
+  const meteredFare =
+    FARE_PER_DISTANCE *
+    calculateDistance(
+      ride.pickup_latitude,
+      ride.pickup_longitude,
+      ride.destination_latitude,
+      ride.destination_longitude,
+    );
+  return INITIAL_FARE + Math.max(meteredFare - ride.discount, 0);
 };
 
 export class ErroredUpstream extends Error {
