@@ -59,3 +59,9 @@ mysql -u"$ISUCON_DB_USER" \
 		--host "$ISUCON_DB_HOST" \
 		--port "$ISUCON_DB_PORT" \
 		"$ISUCON_DB_NAME" < 7-chairs-latest-location-cache.sql
+
+mysql -u"$ISUCON_DB_USER" \
+		-p"$ISUCON_DB_PASSWORD" \
+		--host "$ISUCON_DB_HOST" \
+		--port "$ISUCON_DB_PORT" \
+		"$ISUCON_DB_NAME" < 8-ride-statuses-covering-index.sql
