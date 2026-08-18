@@ -5,7 +5,28 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sync"
 )
+
+// access_tokenからuser/chair/owner行へのインメモリキャッシュ。
+// 各テーブルのid/access_token/username等の識別情報は作成後どのコードパスからも
+// 更新されないため、一度引いた行は安全にキャッシュしてよい
+// (isucon14 Node.js実装 entries/0025と同じ最適化)。
+// POST /api/initialize でDBがリセットされるため、そのタイミングで必ずclearする。
+var (
+	authCacheMu     sync.RWMutex
+	userCacheByTok  = map[string]*User{}
+	chairCacheByTok = map[string]*Chair{}
+	ownerCacheByTok = map[string]*Owner{}
+)
+
+func clearAuthCaches() {
+	authCacheMu.Lock()
+	defer authCacheMu.Unlock()
+	userCacheByTok = map[string]*User{}
+	chairCacheByTok = map[string]*Chair{}
+	ownerCacheByTok = map[string]*Owner{}
+}
 
 func appAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -16,15 +37,24 @@ func appAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		accessToken := c.Value
-		user := &User{}
-		err = db.GetContext(ctx, user, "SELECT * FROM users WHERE access_token = ?", accessToken)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				writeError(w, http.StatusUnauthorized, errors.New("invalid access token"))
+
+		authCacheMu.RLock()
+		user, cached := userCacheByTok[accessToken]
+		authCacheMu.RUnlock()
+
+		if !cached {
+			user = &User{}
+			if err := db.GetContext(ctx, user, "SELECT * FROM users WHERE access_token = ?", accessToken); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeError(w, http.StatusUnauthorized, errors.New("invalid access token"))
+					return
+				}
+				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err)
-			return
+			authCacheMu.Lock()
+			userCacheByTok[accessToken] = user
+			authCacheMu.Unlock()
 		}
 
 		ctx = context.WithValue(ctx, "user", user)
@@ -41,14 +71,24 @@ func ownerAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		accessToken := c.Value
-		owner := &Owner{}
-		if err := db.GetContext(ctx, owner, "SELECT * FROM owners WHERE access_token = ?", accessToken); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				writeError(w, http.StatusUnauthorized, errors.New("invalid access token"))
+
+		authCacheMu.RLock()
+		owner, cached := ownerCacheByTok[accessToken]
+		authCacheMu.RUnlock()
+
+		if !cached {
+			owner = &Owner{}
+			if err := db.GetContext(ctx, owner, "SELECT * FROM owners WHERE access_token = ?", accessToken); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeError(w, http.StatusUnauthorized, errors.New("invalid access token"))
+					return
+				}
+				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err)
-			return
+			authCacheMu.Lock()
+			ownerCacheByTok[accessToken] = owner
+			authCacheMu.Unlock()
 		}
 
 		ctx = context.WithValue(ctx, "owner", owner)
@@ -65,15 +105,24 @@ func chairAuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		accessToken := c.Value
-		chair := &Chair{}
-		err = db.GetContext(ctx, chair, "SELECT * FROM chairs WHERE access_token = ?", accessToken)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				writeError(w, http.StatusUnauthorized, errors.New("invalid access token"))
+
+		authCacheMu.RLock()
+		chair, cached := chairCacheByTok[accessToken]
+		authCacheMu.RUnlock()
+
+		if !cached {
+			chair = &Chair{}
+			if err := db.GetContext(ctx, chair, "SELECT * FROM chairs WHERE access_token = ?", accessToken); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeError(w, http.StatusUnauthorized, errors.New("invalid access token"))
+					return
+				}
+				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
-			writeError(w, http.StatusInternalServerError, err)
-			return
+			authCacheMu.Lock()
+			chairCacheByTok[accessToken] = chair
+			authCacheMu.Unlock()
 		}
 
 		ctx = context.WithValue(ctx, "chair", chair)

@@ -54,19 +54,37 @@ func setup() http.Handler {
 	dbConfig := mysql.NewConfig()
 	dbConfig.User = user
 	dbConfig.Passwd = password
-	dbConfig.Addr = net.JoinHostPort(host, port)
-	dbConfig.Net = "tcp"
 	dbConfig.DBName = dbname
 	dbConfig.ParseTime = true
+
+	// DBが同一ホストにある場合は、TCPループバックよりオーバーヘッドの小さいUnixドメイン
+	// ソケットで接続する(isucon14 Node.js実装 entries/0017と同じ最適化)。
+	if host == "127.0.0.1" || host == "localhost" {
+		socket := os.Getenv("ISUCON_DB_SOCKET")
+		if socket == "" {
+			socket = "/var/run/mysqld/mysqld.sock"
+		}
+		dbConfig.Net = "unix"
+		dbConfig.Addr = socket
+	} else {
+		dbConfig.Net = "tcp"
+		dbConfig.Addr = net.JoinHostPort(host, port)
+	}
 
 	_db, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
 	if err != nil {
 		panic(err)
 	}
+	// Goはgoroutineごとに真の並行実行が可能なため、コネクションプールを無制限のままにすると
+	// mysqldへ過剰な同時接続を投げてCPU競合を招く(実測: Max_used_connections=96、
+	// mysqld平均CPU使用率が2コアの過半を占めた)。上限を絞って抑制する。
+	_db.SetMaxOpenConns(50)
+	_db.SetMaxIdleConns(50)
 	db = _db
 
 	mux := chi.NewRouter()
-	mux.Use(middleware.Logger)
+	// NOTE: middleware.Loggerは全リクエストを標準出力に書き出す純粋なオーバーヘッドのため
+	// 意図的に外している(isucon14 Node.js実装 entries/0018と同じ最適化。中央値+25.9%を確認済み)。
 	mux.Use(middleware.Recoverer)
 	mux.HandleFunc("POST /api/initialize", postInitialize)
 
@@ -132,6 +150,9 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed to initialize: %s: %w", string(out), err))
 		return
 	}
+
+	// DBがリセットされたため、access_token→行のインメモリキャッシュも破棄する
+	clearAuthCaches()
 
 	if _, err := db.ExecContext(ctx, "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'", req.PaymentServer); err != nil {
 		writeError(w, http.StatusInternalServerError, err)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -111,20 +112,49 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	// INSERT直後の再SELECTを避けるため、created_atをアプリ側で生成してINSERTに含める
+	// (isucon14 Node.js実装 entries/0013と同じ最適化)
+	prevLocation := &ChairLocation{}
+	hasPrev := true
+	if err := tx.GetContext(ctx, prevLocation, `SELECT * FROM chair_locations WHERE chair_id = ? ORDER BY created_at DESC LIMIT 1`, chair.ID); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		hasPrev = false
+	}
+
+	recordedAt := time.Now()
 	chairLocationID := ulid.Make().String()
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (?, ?, ?, ?)`,
-		chairLocationID, chair.ID, req.Latitude, req.Longitude,
+		`INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)`,
+		chairLocationID, chair.ID, req.Latitude, req.Longitude, recordedAt,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	location := &ChairLocation{}
-	if err := tx.GetContext(ctx, location, `SELECT * FROM chair_locations WHERE id = ?`, chairLocationID); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	if hasPrev {
+		distance := abs(req.Latitude-prevLocation.Latitude) + abs(req.Longitude-prevLocation.Longitude)
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE chairs SET total_distance = total_distance + ?, total_distance_updated_at = ?, latest_latitude = ?, latest_longitude = ? WHERE id = ?`,
+			distance, recordedAt, req.Latitude, req.Longitude, chair.ID,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		// この椅子にとって初めての位置情報登録(累積走行距離は加算しない)
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE chairs SET latest_latitude = ?, latest_longitude = ? WHERE id = ?`,
+			req.Latitude, req.Longitude, chair.ID,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	ride := &Ride{}
@@ -134,14 +164,16 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
+		// rides.latest_statusキャッシュ列を使い、getLatestRideStatusの追加クエリを不要にする
+		// (isucon14 Node.js実装 entries/0015と同じ最適化)
+		status := ride.LatestStatus
 		if status != "COMPLETED" && status != "CANCELED" {
 			if req.Latitude == ride.PickupLatitude && req.Longitude == ride.PickupLongitude && status == "ENROUTE" {
 				if _, err := tx.ExecContext(ctx, "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)", ulid.Make().String(), ride.ID, "PICKUP"); err != nil {
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE rides SET latest_status = ? WHERE id = ?", "PICKUP", ride.ID); err != nil {
 					writeError(w, http.StatusInternalServerError, err)
 					return
 				}
@@ -149,6 +181,10 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 
 			if req.Latitude == ride.DestinationLatitude && req.Longitude == ride.DestinationLongitude && status == "CARRYING" {
 				if _, err := tx.ExecContext(ctx, "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)", ulid.Make().String(), ride.ID, "ARRIVED"); err != nil {
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE rides SET latest_status = ? WHERE id = ?", "ARRIVED", ride.ID); err != nil {
 					writeError(w, http.StatusInternalServerError, err)
 					return
 				}
@@ -162,7 +198,7 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, &chairPostCoordinateResponse{
-		RecordedAt: location.CreatedAt.UnixMilli(),
+		RecordedAt: recordedAt.UnixMilli(),
 	})
 }
 
@@ -209,19 +245,20 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, ride.ID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			status, err = getLatestRideStatus(ctx, tx, ride.ID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err)
-				return
-			}
-		} else {
-			writeError(w, http.StatusInternalServerError, err)
-			return
+	// 未送信ステータスの有無判定とフォールバックの最新ステータス取得を1クエリに統合
+	// (isucon14 Node.js実装 entries/0012と同じ最適化)
+	rideStatuses := []RideStatus{}
+	if err := tx.SelectContext(ctx, &rideStatuses, `SELECT * FROM ride_statuses WHERE ride_id = ? ORDER BY created_at ASC`, ride.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	status = rideStatuses[len(rideStatuses)-1].Status
+	for _, s := range rideStatuses {
+		if s.ChairSentAt == nil {
+			yetSentRideStatus = s
+			status = s.Status
+			break
 		}
-	} else {
-		status = yetSentRideStatus.Status
 	}
 
 	user := &User{}
@@ -310,18 +347,23 @@ func chairPostRideStatus(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-	// After Picking up user
-	case "CARRYING":
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
-		if err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE rides SET latest_status = ? WHERE id = ?", "ENROUTE", ride.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		if status != "PICKUP" {
+	// After Picking up user
+	case "CARRYING":
+		// rides.latest_statusキャッシュ列を使い、getLatestRideStatusの追加クエリを不要にする
+		// (isucon14 Node.js実装 entries/0015と同じ最適化)
+		if ride.LatestStatus != "PICKUP" {
 			writeError(w, http.StatusBadRequest, errors.New("chair has not arrived yet"))
 			return
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)", ulid.Make().String(), ride.ID, "CARRYING"); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE rides SET latest_status = ? WHERE id = ?", "CARRYING", ride.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}

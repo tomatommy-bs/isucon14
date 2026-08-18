@@ -188,6 +188,13 @@ type getAppRidesResponseItemChair struct {
 	Model string `json:"model"`
 }
 
+type rideWithChairOwner struct {
+	Ride
+	ChairName  string `db:"chair_name"`
+	ChairModel string `db:"chair_model"`
+	OwnerName  string `db:"owner_name"`
+}
+
 func appGetRides(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user := ctx.Value("user").(*User)
@@ -199,11 +206,19 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	rides := []Ride{}
+	// rides.latest_statusキャッシュ列とchairs/ownersへのJOINで、rideごとに個別発行していた
+	// getLatestRideStatus・SELECT chairs・SELECT ownersのN+1を1クエリに集約
+	// (isucon14 Node.js実装 entries/0006・0021・0023と同じ最適化)
+	rides := []rideWithChairOwner{}
 	if err := tx.SelectContext(
 		ctx,
 		&rides,
-		`SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC`,
+		`SELECT r.*, c.name AS chair_name, c.model AS chair_model, o.name AS owner_name
+		 FROM rides r
+		 JOIN chairs c ON c.id = r.chair_id
+		 JOIN owners o ON o.id = c.owner_id
+		 WHERE r.user_id = ? AND r.latest_status = 'COMPLETED'
+		 ORDER BY r.created_at DESC`,
 		user.ID,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -212,20 +227,7 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 
 	items := []getAppRidesResponseItem{}
 	for _, ride := range rides {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if status != "COMPLETED" {
-			continue
-		}
-
-		fare, err := calculateDiscountedFare(ctx, tx, user.ID, &ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
+		fare := calculateDiscountedFareForRide(ride.Ride)
 
 		item := getAppRidesResponseItem{
 			ID:                    ride.ID,
@@ -235,25 +237,13 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 			Evaluation:            *ride.Evaluation,
 			RequestedAt:           ride.CreatedAt.UnixMilli(),
 			CompletedAt:           ride.UpdatedAt.UnixMilli(),
+			Chair: getAppRidesResponseItemChair{
+				ID:    ride.ChairID.String,
+				Name:  ride.ChairName,
+				Model: ride.ChairModel,
+				Owner: ride.OwnerName,
+			},
 		}
-
-		item.Chair = getAppRidesResponseItemChair{}
-
-		chair := &Chair{}
-		if err := tx.GetContext(ctx, chair, `SELECT * FROM chairs WHERE id = ?`, ride.ChairID); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		item.Chair.ID = chair.ID
-		item.Chair.Name = chair.Name
-		item.Chair.Model = chair.Model
-
-		owner := &Owner{}
-		if err := tx.GetContext(ctx, owner, `SELECT * FROM owners WHERE id = ?`, chair.OwnerID); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		item.Chair.Owner = owner.Name
 
 		items = append(items, item)
 	}
@@ -278,19 +268,6 @@ type appPostRidesResponse struct {
 	Fare   int    `json:"fare"`
 }
 
-type executableGet interface {
-	Get(dest interface{}, query string, args ...interface{}) error
-	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-}
-
-func getLatestRideStatus(ctx context.Context, tx executableGet, rideID string) (string, error) {
-	status := ""
-	if err := tx.GetContext(ctx, &status, `SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1`, rideID); err != nil {
-		return "", err
-	}
-	return status, nil
-}
-
 func appPostRides(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	req := &appPostRidesRequest{}
@@ -313,25 +290,14 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	rides := []Ride{}
-	if err := tx.SelectContext(ctx, &rides, `SELECT * FROM rides WHERE user_id = ?`, user.ID); err != nil {
+	// 未完了(latest_status<>COMPLETED)のライドが1件でもあるかを1クエリで判定
+	// (isucon14 Node.js実装 entries/0015のcache column活用と同じ最適化)
+	var hasActive bool
+	if err := tx.GetContext(ctx, &hasActive, `SELECT EXISTS (SELECT 1 FROM rides WHERE user_id = ? AND latest_status <> 'COMPLETED')`, user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	continuingRideCount := 0
-	for _, ride := range rides {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if status != "COMPLETED" {
-			continuingRideCount++
-		}
-	}
-
-	if continuingRideCount > 0 {
+	if hasActive {
 		writeError(w, http.StatusConflict, errors.New("ride already exists"))
 		return
 	}
@@ -362,6 +328,7 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var coupon Coupon
+	discount := 0
 	if rideCount == 1 {
 		// 初回利用で、初回利用クーポンがあれば必ず使う
 		if err := tx.GetContext(ctx, &coupon, "SELECT * FROM coupons WHERE user_id = ? AND code = 'CP_NEW2024' AND used_by IS NULL FOR UPDATE", user.ID); err != nil {
@@ -377,6 +344,7 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			} else {
+				discount = coupon.Discount
 				if _, err := tx.ExecContext(
 					ctx,
 					"UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = ?",
@@ -387,6 +355,7 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		} else {
+			discount = coupon.Discount
 			if _, err := tx.ExecContext(
 				ctx,
 				"UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = 'CP_NEW2024'",
@@ -404,6 +373,7 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
+			discount = coupon.Discount
 			if _, err := tx.ExecContext(
 				ctx,
 				"UPDATE coupons SET used_by = ? WHERE user_id = ? AND code = ?",
@@ -415,17 +385,16 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ride := Ride{}
-	if err := tx.GetContext(ctx, &ride, "SELECT * FROM rides WHERE id = ?", rideID); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	// INSERT直後の再SELECTを避け、確定したdiscountをrides.discountキャッシュ列に書き込む
+	// (isucon14 Node.js実装 entries/0013・0014・0021と同じ最適化)
+	if discount > 0 {
+		if _, err := tx.ExecContext(ctx, "UPDATE rides SET discount = ? WHERE id = ?", discount, rideID); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
-	fare, err := calculateDiscountedFare(ctx, tx, user.ID, &ride, req.PickupCoordinate.Latitude, req.PickupCoordinate.Longitude, req.DestinationCoordinate.Latitude, req.DestinationCoordinate.Longitude)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
+	fare := initialFare + max(farePerDistance*calculateDistance(req.PickupCoordinate.Latitude, req.PickupCoordinate.Longitude, req.DestinationCoordinate.Latitude, req.DestinationCoordinate.Longitude)-discount, 0)
 
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -535,21 +504,19 @@ func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	status, err := getLatestRideStatus(ctx, tx, ride.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
 
-	if status != "ARRIVED" {
+	if ride.LatestStatus != "ARRIVED" {
 		writeError(w, http.StatusBadRequest, errors.New("not arrived yet"))
 		return
 	}
 
+	// updated_atをアプリ側生成の値で明示更新することで、UPDATE直後の再SELECTを不要にする
+	// (isucon14 Node.js実装 entries/0014と同じ最適化)
+	completedAt := time.Now()
 	result, err := tx.ExecContext(
 		ctx,
-		`UPDATE rides SET evaluation = ? WHERE id = ?`,
-		req.Evaluation, rideID)
+		`UPDATE rides SET evaluation = ?, updated_at = ?, latest_status = ? WHERE id = ?`,
+		req.Evaluation, completedAt, "COMPLETED", rideID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -561,21 +528,13 @@ func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("ride not found"))
 		return
 	}
+	ride.UpdatedAt = completedAt
 
 	_, err = tx.ExecContext(
 		ctx,
 		`INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)`,
 		ulid.Make().String(), rideID, "COMPLETED")
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE id = ?`, rideID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusNotFound, errors.New("ride not found"))
-			return
-		}
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -590,11 +549,7 @@ func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fare, err := calculateDiscountedFare(ctx, tx, ride.UserID, ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
+	fare := calculateDiscountedFareForRide(*ride)
 	paymentGatewayRequest := &paymentGatewayPostPaymentRequest{
 		Amount: fare,
 	}
@@ -681,28 +636,24 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	yetSentRideStatus := RideStatus{}
-	status := ""
-	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, ride.ID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			status, err = getLatestRideStatus(ctx, tx, ride.ID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err)
-				return
-			}
-		} else {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-	} else {
-		status = yetSentRideStatus.Status
-	}
-
-	fare, err := calculateDiscountedFare(ctx, tx, user.ID, ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
-	if err != nil {
+	// 未送信ステータスの有無判定とフォールバックの最新ステータス取得を1クエリに統合
+	// (isucon14 Node.js実装 entries/0012と同じ最適化)
+	rideStatuses := []RideStatus{}
+	if err := tx.SelectContext(ctx, &rideStatuses, `SELECT * FROM ride_statuses WHERE ride_id = ? ORDER BY created_at ASC`, ride.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	yetSentRideStatus := RideStatus{}
+	status := rideStatuses[len(rideStatuses)-1].Status
+	for _, s := range rideStatuses {
+		if s.AppSentAt == nil {
+			yetSentRideStatus = s
+			status = s.Status
+			break
+		}
+	}
+
+	fare := calculateDiscountedFareForRide(*ride)
 
 	response := &appGetNotificationResponse{
 		Data: &appGetNotificationResponseData{
@@ -882,59 +833,47 @@ func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 未完了(latest_status<>COMPLETED)のライドを1件でも抱えている椅子のID集合を1クエリで取得
+	// (isucon14 Node.js実装 entries/0020と同じ最適化)
+	busyChairIDs := map[string]bool{}
+	{
+		var ids []string
+		if err := tx.SelectContext(ctx, &ids, `SELECT DISTINCT chair_id FROM rides WHERE chair_id IS NOT NULL AND latest_status <> 'COMPLETED'`); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, id := range ids {
+			busyChairIDs[id] = true
+		}
+	}
+
 	nearbyChairs := []appGetNearbyChairsResponseChair{}
 	for _, chair := range chairs {
 		if !chair.IsActive {
 			continue
 		}
-
-		rides := []*Ride{}
-		if err := tx.SelectContext(ctx, &rides, `SELECT * FROM rides WHERE chair_id = ? ORDER BY created_at DESC`, chair.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-
-		skip := false
-		for _, ride := range rides {
-			// 過去にライドが存在し、かつ、それが完了していない場合はスキップ
-			status, err := getLatestRideStatus(ctx, tx, ride.ID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err)
-				return
-			}
-			if status != "COMPLETED" {
-				skip = true
-				break
-			}
-		}
-		if skip {
+		// 過去にライドが存在し、かつ、それが完了していない場合はスキップ
+		if busyChairIDs[chair.ID] {
 			continue
 		}
 
-		// 最新の位置情報を取得
-		chairLocation := &ChairLocation{}
-		err = tx.GetContext(
-			ctx,
-			chairLocation,
-			`SELECT * FROM chair_locations WHERE chair_id = ? ORDER BY created_at DESC LIMIT 1`,
-			chair.ID,
-		)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			writeError(w, http.StatusInternalServerError, err)
-			return
+		// 最新の位置情報はchairs.latest_latitude/longitudeキャッシュ列から直接引く
+		// (isucon14 Node.js実装 entries/0022と同じ最適化。chair_locationsはベンチ実行中に
+		// 増え続けるため、そこへの集計クエリを避けられる)
+		if !chair.LatestLatitude.Valid || !chair.LatestLongitude.Valid {
+			continue
 		}
+		chairLat := int(chair.LatestLatitude.Int64)
+		chairLon := int(chair.LatestLongitude.Int64)
 
-		if calculateDistance(coordinate.Latitude, coordinate.Longitude, chairLocation.Latitude, chairLocation.Longitude) <= distance {
+		if calculateDistance(coordinate.Latitude, coordinate.Longitude, chairLat, chairLon) <= distance {
 			nearbyChairs = append(nearbyChairs, appGetNearbyChairsResponseChair{
 				ID:    chair.ID,
 				Name:  chair.Name,
 				Model: chair.Model,
 				CurrentCoordinate: Coordinate{
-					Latitude:  chairLocation.Latitude,
-					Longitude: chairLocation.Longitude,
+					Latitude:  chairLat,
+					Longitude: chairLon,
 				},
 			})
 		}
@@ -962,23 +901,19 @@ func calculateFare(pickupLatitude, pickupLongitude, destLatitude, destLongitude 
 	return initialFare + meteredFare
 }
 
+// rides.discount(ライド作成時に確定し、以後変化しないクーポン割引額のキャッシュ列)を
+// 使って、coupons.used_byへの追加クエリなしに割引後運賃を計算する
+// (isucon14 Node.js実装 entries/0021と同じ最適化)。
+func calculateDiscountedFareForRide(ride Ride) int {
+	meteredFare := farePerDistance * calculateDistance(ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
+	return initialFare + max(meteredFare-ride.Discount, 0)
+}
+
 func calculateDiscountedFare(ctx context.Context, tx *sqlx.Tx, userID string, ride *Ride, pickupLatitude, pickupLongitude, destLatitude, destLongitude int) (int, error) {
 	var coupon Coupon
 	discount := 0
 	if ride != nil {
-		destLatitude = ride.DestinationLatitude
-		destLongitude = ride.DestinationLongitude
-		pickupLatitude = ride.PickupLatitude
-		pickupLongitude = ride.PickupLongitude
-
-		// すでにクーポンが紐づいているならそれの割引額を参照
-		if err := tx.GetContext(ctx, &coupon, "SELECT * FROM coupons WHERE used_by = ?", ride.ID); err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				return 0, err
-			}
-		} else {
-			discount = coupon.Discount
-		}
+		return calculateDiscountedFareForRide(*ride), nil
 	} else {
 		// 初回利用クーポンを最優先で使う
 		if err := tx.GetContext(ctx, &coupon, "SELECT * FROM coupons WHERE user_id = ? AND code = 'CP_NEW2024' AND used_by IS NULL", userID); err != nil {
