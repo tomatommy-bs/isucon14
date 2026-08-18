@@ -263,8 +263,10 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	user := &User{}
-	err = tx.GetContext(ctx, user, "SELECT * FROM users WHERE id = ? FOR SHARE", ride.UserID)
+	// usersテーブルは作成後どのコードパスからも更新されないため、user.id→行の
+	// インメモリキャッシュ(FOR SHAREロックは不要、キャッシュヒット時はDBに触れない)を使う
+	// (isucon14 Node.js実装 entries/0025と同じ最適化)。
+	user, err := getUserByID(ctx, tx, ride.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

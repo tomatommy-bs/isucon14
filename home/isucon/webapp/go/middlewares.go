@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+
+	"github.com/jmoiron/sqlx"
 )
 
 // access_tokenからuser/chair/owner行へのインメモリキャッシュ。
@@ -14,8 +16,11 @@ import (
 // (isucon14 Node.js実装 entries/0025と同じ最適化)。
 // POST /api/initialize でDBがリセットされるため、そのタイミングで必ずclearする。
 var (
-	authCacheMu     sync.RWMutex
-	userCacheByTok  = map[string]*User{}
+	authCacheMu    sync.RWMutex
+	userCacheByTok = map[string]*User{}
+	// user.id→行のキャッシュ。chairGetNotificationがride.UserIDからユーザーの氏名を
+	// 引く際に使う(access_tokenを持たない経路のため別マップが必要)。
+	userCacheByID   = map[string]*User{}
 	chairCacheByTok = map[string]*Chair{}
 	ownerCacheByTok = map[string]*Owner{}
 )
@@ -24,6 +29,7 @@ func clearAuthCaches() {
 	authCacheMu.Lock()
 	defer authCacheMu.Unlock()
 	userCacheByTok = map[string]*User{}
+	userCacheByID = map[string]*User{}
 	chairCacheByTok = map[string]*Chair{}
 	ownerCacheByTok = map[string]*Owner{}
 }
@@ -54,12 +60,34 @@ func appAuthMiddleware(next http.Handler) http.Handler {
 			}
 			authCacheMu.Lock()
 			userCacheByTok[accessToken] = user
+			userCacheByID[user.ID] = user
 			authCacheMu.Unlock()
 		}
 
 		ctx = context.WithValue(ctx, "user", user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// getUserByID は、user.id→行のキャッシュを使ってusersテーブルへのDB問い合わせを避ける
+// (isucon14 Node.js実装 entries/0025と同じ最適化。usersテーブルは作成後どのコード
+// パスからも更新されないため、キャッシュしても安全)。キャッシュに無い場合はDBへ問い合わせる。
+func getUserByID(ctx context.Context, tx *sqlx.Tx, userID string) (*User, error) {
+	authCacheMu.RLock()
+	user, cached := userCacheByID[userID]
+	authCacheMu.RUnlock()
+	if cached {
+		return user, nil
+	}
+
+	user = &User{}
+	if err := tx.GetContext(ctx, user, "SELECT * FROM users WHERE id = ?", userID); err != nil {
+		return nil, err
+	}
+	authCacheMu.Lock()
+	userCacheByID[userID] = user
+	authCacheMu.Unlock()
+	return user, nil
 }
 
 func ownerAuthMiddleware(next http.Handler) http.Handler {
