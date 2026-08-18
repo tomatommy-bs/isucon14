@@ -56,6 +56,11 @@ func setup() http.Handler {
 	dbConfig.Passwd = password
 	dbConfig.DBName = dbname
 	dbConfig.ParseTime = true
+	// database/sqlはステートメントキャッシュを持たないため、Get/Select/Exec呼び出しの
+	// たびにMySQLサーバー側でPREPARE→EXECUTE→CLOSEのプロトコルを踏んでしまう
+	// (実測: ADMIN PREPAREが全クエリの24.5%を占めていた)。InterpolateParamsを有効にし、
+	// プレースホルダをクライアント側で文字列補間することでこのオーバーヘッドを排除する。
+	dbConfig.InterpolateParams = true
 
 	// DBが同一ホストにある場合は、TCPループバックよりオーバーヘッドの小さいUnixドメイン
 	// ソケットで接続する(isucon14 Node.js実装 entries/0017と同じ最適化)。

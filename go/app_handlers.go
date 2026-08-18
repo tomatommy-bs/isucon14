@@ -512,7 +512,11 @@ func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
 
 	// updated_atをアプリ側生成の値で明示更新することで、UPDATE直後の再SELECTを不要にする
 	// (isucon14 Node.js実装 entries/0014と同じ最適化)
-	completedAt := time.Now()
+	// DBのdatetime(6)列(マイクロ秒精度)に合わせて切り詰める。切り詰めないと、
+	// InterpolateParams使用時のtime.Timeの文字列化とバイナリプロトコルでの丸め方式の違いにより、
+	// メモリ上に保持する値とDB保存後に読み出した値のミリ秒表現がずれることがある
+	// (実測: appGetRidesのcompleted_atが不一致になりベンチマークが失敗した)。
+	completedAt := time.Now().Truncate(time.Microsecond)
 	result, err := tx.ExecContext(
 		ctx,
 		`UPDATE rides SET evaluation = ?, updated_at = ?, latest_status = ? WHERE id = ?`,

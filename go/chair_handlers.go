@@ -124,7 +124,9 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		hasPrev = false
 	}
 
-	recordedAt := time.Now()
+	// DBのdatetime(6)列(マイクロ秒精度)に合わせて切り詰める(app_handlers.goの
+	// completedAtと同じ理由)。
+	recordedAt := time.Now().Truncate(time.Microsecond)
 	chairLocationID := ulid.Make().String()
 	if _, err := tx.ExecContext(
 		ctx,
