@@ -24,6 +24,7 @@ import { internalGetMatching } from "./internal_handlers.js";
 import {
   appAuthMiddleware,
   chairAuthMiddleware,
+  clearAuthCaches,
   ownerAuthMiddleware,
 } from "./middlewares.js";
 import {
@@ -130,6 +131,8 @@ async function postInitialize(ctx: Context<Environment>) {
   } catch (error) {
     return ctx.text(`Failed to initialize\n${error}`, 500);
   }
+  // DBがリセットされたため、access_token→行のインメモリキャッシュも破棄する
+  clearAuthCaches();
   try {
     await ctx.var.dbConn.query(
       "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'",
